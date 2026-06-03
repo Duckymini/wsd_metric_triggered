@@ -68,8 +68,32 @@ class StreamingTokenBlockDataset(TorchIterableDataset):
                 yield {"input_ids": input_ids, "labels": input_ids.clone()}
 
 
-def _load_streaming_split(dataset_name: str, split_name: str, seed: int, shuffle_buffer_size: int | None):
-    dataset = load_dataset(dataset_name, split=split_name, streaming=True)
+def _expand_data_files(spec: Any) -> Any:
+    if isinstance(spec, dict) and "url_template" in spec:
+        start = int(spec.get("start", 0))
+        end = int(spec["end"])
+        return [spec["url_template"].format(i=i) for i in range(start, end)]
+    return spec
+
+
+def _resolve_data_files(data_files_config: dict[str, Any] | None) -> dict[str, Any] | None:
+    if data_files_config is None:
+        return None
+    return {split: _expand_data_files(spec) for split, spec in data_files_config.items()}
+
+
+def _load_streaming_split(
+    loader_name: str,
+    dataset_config_name: str | None,
+    split_name: str,
+    seed: int,
+    shuffle_buffer_size: int | None,
+    data_files: dict[str, Any] | None,
+):
+    if data_files is None:
+        dataset = load_dataset(loader_name, dataset_config_name, split=split_name, streaming=True)
+    else:
+        dataset = load_dataset(loader_name, data_files=data_files, split=split_name, streaming=True)
     if shuffle_buffer_size is not None and shuffle_buffer_size > 0:
         dataset = dataset.shuffle(buffer_size=shuffle_buffer_size, seed=seed)
     return dataset
@@ -82,17 +106,47 @@ def load_streaming_lm_datasets(
     seed: int,
 ) -> dict[str, StreamingTokenBlockDataset]:
     dataset_name = dataset_config.get("name", "EleutherAI/pile")
+    loader_name = dataset_config.get("loader", dataset_name)
+    dataset_config_name = dataset_config.get("config_name")
+    data_files = _resolve_data_files(dataset_config.get("data_files"))
     text_column = dataset_config.get("text_column", "text")
     train_split = dataset_config.get("train_split", "train")
     validation_split = dataset_config.get("validation_split_name", "validation")
     shuffle_buffer_size = dataset_config.get("shuffle_buffer_size", 10_000)
 
-    train_raw = _load_streaming_split(dataset_name, train_split, seed, shuffle_buffer_size)
+    train_raw = _load_streaming_split(
+        loader_name,
+        dataset_config_name,
+        train_split,
+        seed,
+        shuffle_buffer_size,
+        data_files,
+    )
     try:
-        valid_raw = _load_streaming_split(dataset_name, validation_split, seed, None)
+        valid_raw = _load_streaming_split(
+            loader_name,
+            dataset_config_name,
+            validation_split,
+            seed,
+            None,
+            data_files,
+        )
     except Exception:
         valid_offset = int(dataset_config.get("validation_stream_offset", 100_000))
-        valid_raw = load_dataset(dataset_name, split=train_split, streaming=True).skip(valid_offset)
+        if data_files is None:
+            valid_raw = load_dataset(
+                loader_name,
+                dataset_config_name,
+                split=train_split,
+                streaming=True,
+            ).skip(valid_offset)
+        else:
+            valid_raw = load_dataset(
+                loader_name,
+                data_files=data_files,
+                split=train_split,
+                streaming=True,
+            ).skip(valid_offset)
 
     return {
         "train": StreamingTokenBlockDataset(

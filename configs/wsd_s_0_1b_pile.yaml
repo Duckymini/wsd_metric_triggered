@@ -3,12 +3,19 @@ owner: TBD
 seed: 1
 
 dataset:
-  name: EleutherAI/pile
+  name: The Pile
+  loader: json
   tokenizer_name: gpt2
   text_column: text
   streaming: true
   train_split: train
   validation_split_name: validation
+  data_files:
+    train:
+      url_template: https://the-eye.eu/public/AI/pile/train/{i:02d}.jsonl.zst
+      start: 0
+      end: 30
+    validation: https://the-eye.eu/public/AI/pile/val.jsonl.zst
   shuffle_buffer_size: 10000
   max_validation_samples: 10000
 
