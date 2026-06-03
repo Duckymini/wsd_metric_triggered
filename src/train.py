@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, IterableDataset
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, default_data_collator, set_seed
 
@@ -109,9 +109,16 @@ def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[st
     schedule = config["schedule"]
     dataset = config["dataset"]
     model = config["model"]
-    if schedule.get("type") == "wsd":
-        decay_start = int(schedule.get("warmup_steps", 0)) + int(schedule.get("stable_steps", 0))
-        decay_length = schedule.get("decay_steps", "")
+    if schedule.get("type") in {"wsd", "wsd_s"}:
+        if "decays" in schedule:
+            decay_start = ";".join(str(decay["start_step"]) for decay in schedule["decays"])
+            decay_length = ";".join(
+                str(int(decay["end_step"]) - int(decay["start_step"]))
+                for decay in schedule["decays"]
+            )
+        else:
+            decay_start = int(schedule.get("warmup_steps", 0)) + int(schedule.get("stable_steps", 0))
+            decay_length = schedule.get("decay_steps", "")
         final_lr_ratio = schedule.get("final_lr_ratio", "")
     else:
         decay_start = ""
@@ -174,7 +181,8 @@ def train(config_path: str, run_name: str | None = None) -> None:
 
     context_length = int(config["model"].get("context_length", 512))
     datasets = load_lm_datasets(config["dataset"], tokenizer, context_length, seed)
-    if len(datasets["train"]) == 0 or len(datasets["validation"]) == 0:
+    is_streaming = isinstance(datasets["train"], IterableDataset)
+    if not is_streaming and (len(datasets["train"]) == 0 or len(datasets["validation"]) == 0):
         raise ValueError("Tokenized train and validation datasets must both contain at least one block.")
     model = build_llama_model(config["model"], tokenizer).to(device)
 
@@ -182,7 +190,7 @@ def train(config_path: str, run_name: str | None = None) -> None:
     train_loader = DataLoader(
         datasets["train"],
         batch_size=int(training["batch_size"]),
-        shuffle=True,
+        shuffle=not is_streaming,
         collate_fn=default_data_collator,
     )
     valid_loader = DataLoader(

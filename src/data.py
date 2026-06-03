@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import torch
 from datasets import Dataset, DatasetDict, load_dataset
+from torch.utils.data import IterableDataset as TorchIterableDataset
+from torch.utils.data import get_worker_info
 from transformers import PreTrainedTokenizerBase
 
 
@@ -25,12 +28,99 @@ def _select_first(dataset: Dataset, max_samples: int | None) -> Dataset:
     return dataset.select(range(min(max_samples, len(dataset))))
 
 
+class StreamingTokenBlockDataset(TorchIterableDataset):
+    def __init__(
+        self,
+        source: Any,
+        tokenizer: PreTrainedTokenizerBase,
+        text_column: str,
+        context_length: int,
+        max_samples: int | None = None,
+    ) -> None:
+        self.source = source
+        self.tokenizer = tokenizer
+        self.text_column = text_column
+        self.context_length = context_length
+        self.max_samples = max_samples
+
+    def __iter__(self):
+        worker = get_worker_info()
+        buffer: list[int] = []
+        samples_seen = 0
+
+        for sample_idx, sample in enumerate(self.source):
+            if worker is not None and sample_idx % worker.num_workers != worker.id:
+                continue
+            if self.max_samples is not None and samples_seen >= self.max_samples:
+                break
+
+            text = sample.get(self.text_column)
+            if not isinstance(text, str):
+                continue
+            samples_seen += 1
+
+            tokenized = self.tokenizer(text, return_attention_mask=False)
+            buffer.extend(tokenized["input_ids"])
+            while len(buffer) >= self.context_length:
+                chunk = buffer[: self.context_length]
+                buffer = buffer[self.context_length :]
+                input_ids = torch.tensor(chunk, dtype=torch.long)
+                yield {"input_ids": input_ids, "labels": input_ids.clone()}
+
+
+def _load_streaming_split(dataset_name: str, split_name: str, seed: int, shuffle_buffer_size: int | None):
+    dataset = load_dataset(dataset_name, split=split_name, streaming=True)
+    if shuffle_buffer_size is not None and shuffle_buffer_size > 0:
+        dataset = dataset.shuffle(buffer_size=shuffle_buffer_size, seed=seed)
+    return dataset
+
+
+def load_streaming_lm_datasets(
+    dataset_config: dict[str, Any],
+    tokenizer: PreTrainedTokenizerBase,
+    context_length: int,
+    seed: int,
+) -> dict[str, StreamingTokenBlockDataset]:
+    dataset_name = dataset_config.get("name", "EleutherAI/pile")
+    text_column = dataset_config.get("text_column", "text")
+    train_split = dataset_config.get("train_split", "train")
+    validation_split = dataset_config.get("validation_split_name", "validation")
+    shuffle_buffer_size = dataset_config.get("shuffle_buffer_size", 10_000)
+
+    train_raw = _load_streaming_split(dataset_name, train_split, seed, shuffle_buffer_size)
+    try:
+        valid_raw = _load_streaming_split(dataset_name, validation_split, seed, None)
+    except Exception:
+        valid_offset = int(dataset_config.get("validation_stream_offset", 100_000))
+        valid_raw = load_dataset(dataset_name, split=train_split, streaming=True).skip(valid_offset)
+
+    return {
+        "train": StreamingTokenBlockDataset(
+            train_raw,
+            tokenizer,
+            text_column,
+            context_length,
+            dataset_config.get("max_train_samples"),
+        ),
+        "validation": StreamingTokenBlockDataset(
+            valid_raw,
+            tokenizer,
+            text_column,
+            context_length,
+            dataset_config.get("max_validation_samples"),
+        ),
+    }
+
+
 def load_lm_datasets(
     dataset_config: dict[str, Any],
     tokenizer: PreTrainedTokenizerBase,
     context_length: int,
     seed: int,
-) -> DatasetDict:
+) -> DatasetDict | dict[str, StreamingTokenBlockDataset]:
+    if dataset_config.get("streaming", False):
+        return load_streaming_lm_datasets(dataset_config, tokenizer, context_length, seed)
+
     dataset_name = dataset_config.get("name", "JeanKaddour/minipile")
     validation_split = float(dataset_config.get("validation_split", 0.02))
     raw = load_dataset(dataset_name)
@@ -81,4 +171,3 @@ def load_lm_datasets(
     lm_train.set_format(type="torch")
     lm_valid.set_format(type="torch")
     return DatasetDict({"train": lm_train, "validation": lm_valid})
-
