@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python -m src.train --config configs/wsd_debug.yaml
+cd /scratch/optimisation
+export PYTHONPATH=/scratch/optimisation:${PYTHONPATH:-}
+
+python3 -m src.train --config configs/wsd_debug.yaml
 
