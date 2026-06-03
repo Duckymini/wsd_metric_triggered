@@ -1,0 +1,10 @@
+# Placeholder only. Replace with real experiment configs when coding starts.
+run_id: TBD
+model: 30M
+dataset: TBD
+tokens: TBD
+schedule: fixed_wsd
+decay_start: 0.90
+decay_length: 0.10
+final_lr_ratio: 0.10
+seed: 1

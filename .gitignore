@@ -1,0 +1,34 @@
+# Python and editor noise
+__pycache__/
+*.py[cod]
+.DS_Store
+.vscode/
+.idea/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Local data and heavy artifacts
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Experiment tracking outputs
+wandb/
+mlruns/
+
+# Report build products
+reports/**/*.aux
+reports/**/*.bbl
+reports/**/*.blg
+reports/**/*.fdb_latexmk
+reports/**/*.fls
+reports/**/*.log
+reports/**/*.out
+reports/**/*.synctex.gz
+reports/**/*.toc

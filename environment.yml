@@ -1,0 +1,30 @@
+name: wsd-decay
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytorch
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - jupyterlab
+  - ipykernel
+  - pyyaml
+  - tqdm
+  - pip:
+      - transformers
+      - datasets
+      - tokenizers
+      - accelerate
+      - evaluate
+      - wandb
+      - tensorboard
+      - einops
+      - tiktoken
+      - sentencepiece
+      - rich
