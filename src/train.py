@@ -24,7 +24,6 @@ from src.schedules import build_lr_scheduler
 
 
 def _device() -> torch.device:
-    
     if torch.cuda.is_available():
         return torch.device("cuda")
     if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
@@ -32,6 +31,12 @@ def _device() -> torch.device:
     return torch.device("cpu")
 
 
+def _configure_torch_for_device(device: torch.device) -> None:
+    if device.type != "cuda":
+        return
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
 
 
 def _autocast_context(device: torch.device, mixed_precision: str):
@@ -94,7 +99,8 @@ def _batch_to_device(
         raise ValueError(
             f"Batch sequence length {sequence_length} exceeds model context_length {context_length}."
         )
-    return {key: value.to(device) for key, value in batch.items()}
+    non_blocking = device.type == "cuda"
+    return {key: value.to(device, non_blocking=non_blocking) for key, value in batch.items()}
 
 
 @torch.no_grad()
@@ -192,6 +198,7 @@ def train(config_path: str, run_name: str | None = None) -> None:
     shutil.copy2(config_path, output_paths["results"] / "source_config.yaml")
 
     device = _device()
+    _configure_torch_for_device(device)
     tokenizer = AutoTokenizer.from_pretrained(config["dataset"].get("tokenizer_name", "gpt2"))
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -204,17 +211,20 @@ def train(config_path: str, run_name: str | None = None) -> None:
     model = build_llama_model(config["model"], tokenizer).to(device)
 
     training = config["training"]
+    pin_memory = device.type == "cuda"
     train_loader = DataLoader(
         datasets["train"],
         batch_size=int(training["batch_size"]),
         shuffle=not is_streaming,
         collate_fn=default_data_collator,
+        pin_memory=pin_memory,
     )
     valid_loader = DataLoader(
         datasets["validation"],
         batch_size=int(training.get("eval_batch_size", training["batch_size"])),
         shuffle=False,
         collate_fn=default_data_collator,
+        pin_memory=pin_memory,
     )
 
     optimizer = torch.optim.AdamW(
