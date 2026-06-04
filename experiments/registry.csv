@@ -2,3 +2,5 @@ run_id,owner,status,model,dataset,tokens,schedule,decay_start,decay_length,final
 cosine_debug_20260603-084920,TBD,finished,small_llama_256x4,JeanKaddour/minipile,409600,cosine,,,0.1,fixed,1,8.517467594146728,small cosine MiniPile debug baseline
 wsd_debug_20260603-085559,TBD,finished,small_llama_256x4,JeanKaddour/minipile,409600,wsd,40,10,0.1,fixed,1,7.6389124393463135,small WSD MiniPile debug baseline
 cosine_debug_20260604-080734,TBD,finished,small_llama_256x4,HuggingFaceFW/fineweb,409600,cosine,,,0.1,fixed,1,8.92782802581787,small cosine FineWeb debug baseline
+run_id,owner,status,model,dataset,tokens,schedule,decay_start,decay_length,final_lr_ratio,trigger,seed,result,notes
+wsd_debug_20260604-080859,TBD,finished,small_llama_256x4,HuggingFaceFW/fineweb,409600,wsd,40,10,0.1,fixed,1,8.377143049240113,small WSD FineWeb debug baseline
