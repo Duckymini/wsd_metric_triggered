@@ -119,6 +119,7 @@ def evaluate(
 
 def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[str, Any]) -> None:
     registry_path = Path("experiments") / "registry.csv"
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
     training = config["training"]
     schedule = config["schedule"]
     dataset = config["dataset"]
