@@ -13,8 +13,7 @@ env/
 # Local data and heavy artifacts
 data/*
 !data/.gitkeep
-logs/*
-!logs/.gitkeep
+
 checkpoints/*
 !checkpoints/.gitkeep
 
