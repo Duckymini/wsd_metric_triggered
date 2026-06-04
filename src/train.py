@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import shutil
+import sys
 import time
 from contextlib import nullcontext
 from datetime import datetime
@@ -346,6 +348,10 @@ def main() -> None:
     parser.add_argument("--run-name", default=None, help="Optional run-name override.")
     args = parser.parse_args()
     train(args.config, args.run_name)
+    if os.environ.get("TRAIN_FORCE_OS_EXIT_ON_SUCCESS") == "1":
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":
