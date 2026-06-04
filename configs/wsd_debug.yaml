@@ -3,10 +3,15 @@ owner: TBD
 seed: 1
 
 dataset:
-  name: JeanKaddour/minipile
+  name: HuggingFaceFW/fineweb
+  config_name: sample-10BT
   tokenizer_name: gpt2
   text_column: text
-  validation_split: 0.02
+  streaming: true
+  train_split: train
+  validation_from_train: true
+  validation_stream_offset: 5000
+  shuffle_buffer_size: 1000
   max_train_samples: 2048
   max_validation_samples: 256
 
@@ -33,7 +38,7 @@ training:
   eval_interval_steps: 10
   save_interval_steps: 25
   max_eval_batches: 10
-  notes: small WSD MiniPile debug baseline
+  notes: small WSD FineWeb debug baseline
 
 schedule:
   type: wsd
@@ -41,4 +46,3 @@ schedule:
   stable_steps: 35
   decay_steps: 10
   final_lr_ratio: 0.1
-

@@ -1,21 +1,16 @@
-run_name: wsd_s_0_1b_pile_50b
+run_name: wsd_s_0_1b_fineweb_50b
 owner: TBD
 seed: 1
 
 dataset:
-  name: The Pile
-  loader: json
+  name: HuggingFaceFW/fineweb
+  config_name: sample-100BT
   tokenizer_name: gpt2
   text_column: text
   streaming: true
   train_split: train
-  validation_split_name: validation
-  data_files:
-    train:
-      url_template: https://the-eye.eu/public/AI/pile/train/{i:02d}.jsonl.zst
-      start: 0
-      end: 30
-    validation: https://the-eye.eu/public/AI/pile/val.jsonl.zst
+  validation_from_train: true
+  validation_stream_offset: 100000
   shuffle_buffer_size: 10000
   max_validation_samples: 10000
 
@@ -42,7 +37,7 @@ training:
   eval_interval_steps: 500
   save_interval_steps: 1250
   max_eval_batches: 50
-  notes: 0.1B LLaMA WSD-S 50B-token baseline on The Pile
+  notes: 0.1B LLaMA WSD-S 50B-token baseline on FineWeb sample-100BT
 
 schedule:
   type: wsd_s

@@ -130,7 +130,7 @@ def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[st
         "owner": config.get("owner", "TBD"),
         "status": "finished",
         "model": model.get("name", "small_llama"),
-        "dataset": dataset.get("name", "JeanKaddour/minipile"),
+        "dataset": dataset.get("name", "HuggingFaceFW/fineweb"),
         "tokens": final_metrics.get("tokens_seen"),
         "schedule": schedule.get("type"),
         "decay_start": decay_start,
@@ -312,7 +312,7 @@ def train(config_path: str, run_name: str | None = None) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train a small LLaMA-style MiniPile baseline.")
+    parser = argparse.ArgumentParser(description="Train a LLaMA-style language model baseline.")
     parser.add_argument("--config", required=True, help="Path to a YAML config.")
     parser.add_argument("--run-name", default=None, help="Optional run-name override.")
     args = parser.parse_args()

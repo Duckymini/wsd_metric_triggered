@@ -105,7 +105,7 @@ def load_streaming_lm_datasets(
     context_length: int,
     seed: int,
 ) -> dict[str, StreamingTokenBlockDataset]:
-    dataset_name = dataset_config.get("name", "EleutherAI/pile")
+    dataset_name = dataset_config.get("name", "HuggingFaceFW/fineweb")
     loader_name = dataset_config.get("loader", dataset_name)
     dataset_config_name = dataset_config.get("config_name")
     data_files = _resolve_data_files(dataset_config.get("data_files"))
@@ -122,16 +122,7 @@ def load_streaming_lm_datasets(
         shuffle_buffer_size,
         data_files,
     )
-    try:
-        valid_raw = _load_streaming_split(
-            loader_name,
-            dataset_config_name,
-            validation_split,
-            seed,
-            None,
-            data_files,
-        )
-    except Exception:
+    if dataset_config.get("validation_from_train", False):
         valid_offset = int(dataset_config.get("validation_stream_offset", 100_000))
         if data_files is None:
             valid_raw = load_dataset(
@@ -147,6 +138,32 @@ def load_streaming_lm_datasets(
                 split=train_split,
                 streaming=True,
             ).skip(valid_offset)
+    else:
+        try:
+            valid_raw = _load_streaming_split(
+                loader_name,
+                dataset_config_name,
+                validation_split,
+                seed,
+                None,
+                data_files,
+            )
+        except Exception:
+            valid_offset = int(dataset_config.get("validation_stream_offset", 100_000))
+            if data_files is None:
+                valid_raw = load_dataset(
+                    loader_name,
+                    dataset_config_name,
+                    split=train_split,
+                    streaming=True,
+                ).skip(valid_offset)
+            else:
+                valid_raw = load_dataset(
+                    loader_name,
+                    data_files=data_files,
+                    split=train_split,
+                    streaming=True,
+                ).skip(valid_offset)
 
     return {
         "train": StreamingTokenBlockDataset(
@@ -165,7 +182,6 @@ def load_streaming_lm_datasets(
         ),
     }
 
-
 def load_lm_datasets(
     dataset_config: dict[str, Any],
     tokenizer: PreTrainedTokenizerBase,
@@ -175,7 +191,7 @@ def load_lm_datasets(
     if dataset_config.get("streaming", False):
         return load_streaming_lm_datasets(dataset_config, tokenizer, context_length, seed)
 
-    dataset_name = dataset_config.get("name", "JeanKaddour/minipile")
+    dataset_name = dataset_config.get("name", "HuggingFaceFW/fineweb")
     validation_split = float(dataset_config.get("validation_split", 0.02))
     raw = load_dataset(dataset_name)
 
