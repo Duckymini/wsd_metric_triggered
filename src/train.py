@@ -82,6 +82,19 @@ def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
         f.write(json.dumps(row) + "\n")
 
 
+def _batch_to_device(
+    batch: dict[str, torch.Tensor],
+    device: torch.device,
+    context_length: int,
+) -> dict[str, torch.Tensor]:
+    sequence_length = int(batch["input_ids"].shape[1])
+    if sequence_length > context_length:
+        raise ValueError(
+            f"Batch sequence length {sequence_length} exceeds model context_length {context_length}."
+        )
+    return {key: value.to(device) for key, value in batch.items()}
+
+
 @torch.no_grad()
 def evaluate(
     model: torch.nn.Module,
@@ -89,13 +102,14 @@ def evaluate(
     device: torch.device,
     max_batches: int,
     mixed_precision: str,
+    context_length: int,
 ) -> float:
     model.eval()
     losses = []
     for batch_idx, batch in enumerate(loader):
         if batch_idx >= max_batches:
             break
-        batch = {key: value.to(device) for key, value in batch.items()}
+        batch = _batch_to_device(batch, device, context_length)
         with _autocast_context(device, mixed_precision):
             outputs = model(**batch)
         losses.append(float(outputs.loss.detach().cpu()))
@@ -237,7 +251,7 @@ def train(config_path: str, run_name: str | None = None) -> None:
                 train_iter = iter(train_loader)
                 batch = next(train_iter)
 
-            batch = {key: value.to(device) for key, value in batch.items()}
+            batch = _batch_to_device(batch, device, context_length)
             tokens_seen += int(batch["input_ids"].numel())
             with _autocast_context(device, mixed_precision):
                 outputs = model(**batch)
@@ -267,7 +281,14 @@ def train(config_path: str, run_name: str | None = None) -> None:
             )
 
         if step % eval_interval == 0 or step == max_steps:
-            valid_loss = evaluate(model, valid_loader, device, max_eval_batches, mixed_precision)
+            valid_loss = evaluate(
+                model,
+                valid_loader,
+                device,
+                max_eval_batches,
+                mixed_precision,
+                context_length,
+            )
             _append_jsonl(
                 log_path,
                 {
@@ -289,7 +310,14 @@ def train(config_path: str, run_name: str | None = None) -> None:
                 config,
             )
 
-    final_validation_loss = evaluate(model, valid_loader, device, max_eval_batches, mixed_precision)
+    final_validation_loss = evaluate(
+        model,
+        valid_loader,
+        device,
+        max_eval_batches,
+        mixed_precision,
+        context_length,
+    )
     final_metrics = {
         "run_id": run_id,
         "final_train_loss": running_loss / max(1, max_steps),

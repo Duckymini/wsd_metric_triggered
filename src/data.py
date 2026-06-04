@@ -28,6 +28,10 @@ def _select_first(dataset: Dataset, max_samples: int | None) -> Dataset:
     return dataset.select(range(min(max_samples, len(dataset))))
 
 
+def _tokenize_for_packing(tokenizer: PreTrainedTokenizerBase, text: str | list[str]) -> dict[str, Any]:
+    return tokenizer(text, return_attention_mask=False, verbose=False)
+
+
 class StreamingTokenBlockDataset(TorchIterableDataset):
     def __init__(
         self,
@@ -59,7 +63,7 @@ class StreamingTokenBlockDataset(TorchIterableDataset):
                 continue
             samples_seen += 1
 
-            tokenized = self.tokenizer(text, return_attention_mask=False)
+            tokenized = _tokenize_for_packing(self.tokenizer, text)
             buffer.extend(tokenized["input_ids"])
             while len(buffer) >= self.context_length:
                 chunk = buffer[: self.context_length]
@@ -208,7 +212,7 @@ def load_lm_datasets(
     text_column = _pick_text_column(train_raw, dataset_config.get("text_column"))
 
     def tokenize(batch: dict[str, list[Any]]) -> dict[str, list[list[int]]]:
-        return tokenizer(batch[text_column], return_attention_mask=False)
+        return _tokenize_for_packing(tokenizer, batch[text_column])
 
     def group_texts(batch: dict[str, list[list[int]]]) -> dict[str, list[list[int]]]:
         concatenated = []
