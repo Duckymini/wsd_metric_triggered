@@ -45,6 +45,28 @@ def _wsd_decay_intervals(schedule_config: dict[str, Any], warmup_steps: int) -> 
     return [(start_step, start_step + decay_steps)]
 
 
+def build_probe_scheduler(
+    optimizer: Optimizer,
+    decay_length: int,
+    final_lr_ratio: float,
+    decay_type: str = "inverse_proportional",
+) -> LambdaLR:
+    """Scheduler for probe decays: starts decaying immediately from step 0."""
+    decay_type = decay_type.lower()
+
+    def lr_lambda(step: int) -> float:
+        if step >= decay_length:
+            return final_lr_ratio
+        progress = float(step) / float(decay_length)
+        if decay_type == "inverse_proportional":
+            return _inverse_proportional_decay(progress, final_lr_ratio)
+        if decay_type == "cosine":
+            return _cosine_decay(progress, final_lr_ratio)
+        raise ValueError(f"Unknown decay_type '{decay_type}'.")
+
+    return LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
 def build_lr_scheduler(optimizer: Optimizer, schedule_config: dict[str, Any]) -> LambdaLR:
     schedule_type = schedule_config["type"].lower()
     warmup_steps = int(schedule_config.get("warmup_steps", 0))

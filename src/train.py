@@ -7,12 +7,15 @@ import os
 import shutil
 import sys
 import time
+from collections import deque
 from contextlib import nullcontext
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, IterableDataset
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, default_data_collator, set_seed
@@ -20,7 +23,7 @@ from transformers import AutoTokenizer, default_data_collator, set_seed
 from src.config import load_config, save_config
 from src.data import load_lm_datasets
 from src.model import build_llama_model
-from src.schedules import build_lr_scheduler
+from src.schedules import build_lr_scheduler, build_probe_scheduler
 
 
 def _device() -> torch.device:
@@ -123,6 +126,103 @@ def evaluate(
         losses.append(float(outputs.loss.detach().cpu()))
     model.train()
     return sum(losses) / max(1, len(losses))
+
+
+def _compute_step_metrics(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    grad_norm: float,
+    prev_grad_vec: torch.Tensor | None,
+) -> tuple[dict[str, float], torch.Tensor]:
+    """Gradient and weight metrics computed after backward, before optimizer.step()."""
+    grad_mags = torch.stack([p.grad.norm() for p in model.parameters() if p.grad is not None])
+    grad_snr = (grad_mags.mean() / (grad_mags.std() + 1e-8)).item()
+
+    weight_norm = sum(p.data.norm() ** 2 for p in model.parameters()).sqrt().item()
+
+    current_grad_vec = torch.cat([
+        p.grad.detach().flatten() for p in model.parameters() if p.grad is not None
+    ])
+    grad_cosine_sim = (
+        F.cosine_similarity(current_grad_vec.unsqueeze(0), prev_grad_vec.unsqueeze(0)).item()
+        if prev_grad_vec is not None
+        else 0.0
+    )
+
+    v_tensors = [s["exp_avg_sq"] for s in optimizer.state.values() if "exp_avg_sq" in s]
+    adam_v_norm = sum(v.norm() ** 2 for v in v_tensors).sqrt().item() if v_tensors else 0.0
+
+    metrics = {
+        "grad_snr": grad_snr,
+        "weight_norm": weight_norm,
+        "grad_weight_ratio": grad_norm / (weight_norm + 1e-8),
+        "grad_cosine_sim": grad_cosine_sim,
+        "adam_v_norm": adam_v_norm,
+    }
+    return metrics, current_grad_vec
+
+
+def _compute_post_step_metrics(
+    model: torch.nn.Module,
+    prev_params_vec: torch.Tensor | None,
+) -> tuple[dict[str, float], torch.Tensor]:
+    """Parameter update magnitude computed after optimizer.step()."""
+    current_params_vec = torch.cat([p.data.detach().flatten() for p in model.parameters()])
+    param_update_norm = (
+        (current_params_vec - prev_params_vec).norm().item() if prev_params_vec is not None else 0.0
+    )
+    return {"param_update_norm": param_update_norm}, current_params_vec
+
+
+def _run_probe_decay(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    train_loader: DataLoader,
+    valid_loader: DataLoader,
+    sweep_cfg: dict[str, Any],
+    training: dict[str, Any],
+    device: torch.device,
+    mixed_precision: str,
+    context_length: int,
+) -> float:
+    """Snapshot model+optimizer, run a probe decay, evaluate, restore. Returns val loss."""
+    decay_length = int(sweep_cfg["decay_length"])
+    final_lr_ratio = float(sweep_cfg.get("final_lr_ratio", 0.1))
+    decay_type = sweep_cfg.get("decay_type", "inverse_proportional")
+    grad_accum = int(training.get("gradient_accumulation_steps", 1))
+    max_grad_norm = training.get("max_grad_norm")
+    max_eval_batches = int(training.get("max_eval_batches", 20))
+
+    saved_model = deepcopy(model.state_dict())
+    saved_optim = deepcopy(optimizer.state_dict())
+
+    probe_scheduler = build_probe_scheduler(optimizer, decay_length, final_lr_ratio, decay_type)
+    probe_iter = iter(train_loader)
+
+    model.train()
+    for _ in range(decay_length):
+        optimizer.zero_grad(set_to_none=True)
+        for _ in range(grad_accum):
+            try:
+                batch = next(probe_iter)
+            except StopIteration:
+                probe_iter = iter(train_loader)
+                batch = next(probe_iter)
+            batch = _batch_to_device(batch, device, context_length)
+            with _autocast_context(device, mixed_precision):
+                outputs = model(**batch)
+                loss = outputs.loss / grad_accum
+            loss.backward()
+        if max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), float(max_grad_norm))
+        optimizer.step()
+        probe_scheduler.step()
+
+    val_loss = evaluate(model, valid_loader, device, max_eval_batches, mixed_precision, context_length)
+
+    model.load_state_dict(saved_model)
+    optimizer.load_state_dict(saved_optim)
+    return val_loss
 
 
 def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[str, Any]) -> None:
@@ -245,17 +345,27 @@ def train(config_path: str, run_name: str | None = None) -> None:
     if mixed_precision == "auto":
         mixed_precision = "bf16" if device.type == "cuda" else "none"
 
+    sweep_cfg = training.get("decay_sweep", {})
+    sweep_enabled = bool(sweep_cfg.get("enabled", False))
+    probe_steps = set(int(s) for s in sweep_cfg.get("probe_steps", []))
     log_path = output_paths["logs"] / "metrics.jsonl"
+    sweep_log_path = output_paths["logs"] / "decay_sweep.jsonl"
     train_iter = iter(train_loader)
     tokens_seen = 0
     running_loss = 0.0
     start_time = time.time()
+
+    # Rolling state for extended metrics
+    recent_losses: deque[float] = deque(maxlen=10)
+    prev_grad_vec: torch.Tensor | None = None
+    prev_params_vec: torch.Tensor | None = None
 
     model.train()
     progress = tqdm(range(1, max_steps + 1), desc=f"Training {run_id}")
     for step in progress:
         optimizer.zero_grad(set_to_none=True)
         step_loss = 0.0
+        all_per_example_losses: list[torch.Tensor] = []
 
         for _ in range(grad_accum):
             try:
@@ -269,15 +379,61 @@ def train(config_path: str, run_name: str | None = None) -> None:
             with _autocast_context(device, mixed_precision):
                 outputs = model(**batch)
                 loss = outputs.loss / grad_accum
+
+            # Per-example loss variance (before backward while logits are live)
+            with torch.no_grad():
+                B, T, V = outputs.logits.shape
+                shift_logits = outputs.logits[:, :-1, :].contiguous()
+                shift_labels = batch["labels"][:, 1:].contiguous()
+                per_token = F.cross_entropy(
+                    shift_logits.reshape(-1, V),
+                    shift_labels.reshape(-1),
+                    ignore_index=-100,
+                    reduction="none",
+                ).reshape(B, T - 1)
+                mask = (shift_labels != -100).float()
+                per_example = (per_token * mask).sum(-1) / mask.sum(-1).clamp(min=1)
+                all_per_example_losses.append(per_example.cpu())
+
             loss.backward()
             step_loss += float(loss.detach().cpu())
 
+        # Gradient metrics (gradients available, before optimizer.step)
         if training.get("max_grad_norm") is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), float(training["max_grad_norm"]))
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), float(training["max_grad_norm"])
+            ).item()
+        else:
+            grad_norm = sum(
+                p.grad.norm() ** 2 for p in model.parameters() if p.grad is not None
+            ).sqrt().item()
+
+        grad_metrics, current_grad_vec = _compute_step_metrics(
+            model, optimizer, grad_norm, prev_grad_vec
+        )
+        prev_grad_vec = current_grad_vec
+
         optimizer.step()
         scheduler.step()
 
+        post_metrics, current_params_vec = _compute_post_step_metrics(model, prev_params_vec)
+        prev_params_vec = current_params_vec
+
+        # Rolling loss stats
         running_loss += step_loss
+        recent_losses.append(step_loss)
+        loss_variance = (
+            torch.cat(all_per_example_losses).var().item() if len(all_per_example_losses) > 1 else 0.0
+        )
+        loss_oscillation = (
+            torch.tensor(list(recent_losses)).std().item() if len(recent_losses) > 1 else 0.0
+        )
+        loss_improvement_rate = (
+            (recent_losses[0] - recent_losses[-1]) / len(recent_losses)
+            if len(recent_losses) > 1
+            else 0.0
+        )
+
         lr = scheduler.get_last_lr()[0]
         progress.set_postfix(loss=f"{step_loss:.4f}", lr=f"{lr:.2e}")
 
@@ -288,6 +444,16 @@ def train(config_path: str, run_name: str | None = None) -> None:
                     "step": step,
                     "tokens_seen": tokens_seen,
                     "train_loss": step_loss,
+                    "loss_variance": loss_variance,
+                    "loss_oscillation": loss_oscillation,
+                    "loss_improvement_rate": loss_improvement_rate,
+                    "grad_norm": grad_norm,
+                    "grad_snr": grad_metrics["grad_snr"],
+                    "grad_weight_ratio": grad_metrics["grad_weight_ratio"],
+                    "grad_cosine_sim": grad_metrics["grad_cosine_sim"],
+                    "adam_v_norm": grad_metrics["adam_v_norm"],
+                    "weight_norm": grad_metrics["weight_norm"],
+                    "param_update_norm": post_metrics["param_update_norm"],
                     "learning_rate": lr,
                     "elapsed_seconds": time.time() - start_time,
                 },
@@ -321,6 +487,31 @@ def train(config_path: str, run_name: str | None = None) -> None:
                 scheduler,
                 step,
                 config,
+            )
+
+        if sweep_enabled and step in probe_steps:
+            probe_val_loss = _run_probe_decay(
+                model, optimizer, train_loader, valid_loader,
+                sweep_cfg, training, device, mixed_precision, context_length,
+            )
+            _append_jsonl(
+                sweep_log_path,
+                {
+                    "probe_start_step": step,
+                    "probe_final_val_loss": probe_val_loss,
+                    "train_loss": step_loss,
+                    "loss_variance": loss_variance,
+                    "loss_oscillation": loss_oscillation,
+                    "loss_improvement_rate": loss_improvement_rate,
+                    "grad_norm": grad_norm,
+                    "grad_snr": grad_metrics["grad_snr"],
+                    "grad_weight_ratio": grad_metrics["grad_weight_ratio"],
+                    "grad_cosine_sim": grad_metrics["grad_cosine_sim"],
+                    "adam_v_norm": grad_metrics["adam_v_norm"],
+                    "weight_norm": grad_metrics["weight_norm"],
+                    "param_update_norm": post_metrics["param_update_norm"],
+                    "learning_rate": lr,
+                },
             )
 
     final_validation_loss = evaluate(
