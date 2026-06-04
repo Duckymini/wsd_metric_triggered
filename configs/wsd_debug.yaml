@@ -39,6 +39,12 @@ training:
   save_interval_steps: 25
   max_eval_batches: 10
   notes: small WSD FineWeb debug baseline
+  decay_sweep:
+    enabled: true
+    probe_steps: [10, 15, 20, 25, 30, 35, 40]
+    decay_length: 10
+    final_lr_ratio: 0.1
+    decay_type: inverse_proportional
 
 schedule:
   type: wsd
