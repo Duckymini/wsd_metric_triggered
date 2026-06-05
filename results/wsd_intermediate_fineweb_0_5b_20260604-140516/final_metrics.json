@@ -1,0 +1,10 @@
+{
+  "run_id": "wsd_intermediate_fineweb_0_5b_20260604-140516",
+  "final_train_loss": 5.14807570258528,
+  "final_validation_loss": 4.138580055236816,
+  "tokens_seen": 524288000,
+  "final_learning_rate": 5.9999999999999995e-05,
+  "total_seconds": 5771.431585550308,
+  "device": "cuda",
+  "schedule": "wsd_s"
+}

@@ -1,3 +1,5 @@
 run_id,owner,status,model,dataset,tokens,schedule,decay_start,decay_length,final_lr_ratio,trigger,seed,result,notes
 cosine_debug_20260604-080734,TBD,finished,small_llama_256x4,HuggingFaceFW/fineweb,409600,cosine,,,0.1,fixed,1,8.92782802581787,small cosine FineWeb debug baseline
 wsd_debug_20260604-080859,TBD,finished,small_llama_256x4,HuggingFaceFW/fineweb,409600,wsd,40,10,0.1,fixed,1,8.377143049240113,small WSD FineWeb debug baseline
+wsd_intermediate_fineweb_0_5b_20260604-140516,TBD,finished,llama_intermediate_512x8,HuggingFaceFW/fineweb,524288000,wsd_s,900,100,0.1,fixed,1,4.138580055236816,intermediate LLaMA WSD 0.5B-token FineWeb baseline for WSD ablations
+wsd_s_0_1b_fineweb_2_6b_20260604-104941,TBD,finished,llama_0_1B,HuggingFaceFW/fineweb,2621440000,wsd_s,1125,125,0.1,fixed,1,3.690046229362488,0.1B LLaMA WSD-S 2.6B-token baseline on FineWeb sample-100BT
