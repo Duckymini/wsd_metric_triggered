@@ -1,0 +1,10 @@
+{
+  "run_id": "wsd_debug_20260604-080859",
+  "final_train_loss": 9.210316770076751,
+  "final_validation_loss": 8.377143049240113,
+  "tokens_seen": 409600,
+  "final_learning_rate": 2.9999999999999997e-05,
+  "total_seconds": 14.796156406402588,
+  "device": "cuda",
+  "schedule": "wsd"
+}
