@@ -225,6 +225,136 @@ def _run_probe_decay(
     return val_loss
 
 
+def _run_probe_decay_with_history(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    train_loader: DataLoader,
+    valid_loader: DataLoader,
+    probe_cfg: dict[str, Any],
+    training: dict[str, Any],
+    device: torch.device,
+    mixed_precision: str,
+    context_length: int,
+) -> tuple[float, list[dict[str, float]]]:
+    """Snapshot state, run one probe decay, log validation through decay, then restore."""
+    decay_length = int(probe_cfg["decay_length"])
+    final_lr_ratio = float(probe_cfg.get("final_lr_ratio", 0.1))
+    decay_type = probe_cfg.get("decay_type", "inverse_proportional")
+    eval_interval = int(probe_cfg.get("probe_eval_interval_steps", 5))
+    grad_accum = int(training.get("gradient_accumulation_steps", 1))
+    max_grad_norm = training.get("max_grad_norm")
+    max_eval_batches = int(probe_cfg.get("max_probe_eval_batches", training.get("max_eval_batches", 20)))
+
+    saved_model = deepcopy(model.state_dict())
+    saved_optim = deepcopy(optimizer.state_dict())
+
+    probe_scheduler = build_probe_scheduler(optimizer, decay_length, final_lr_ratio, decay_type)
+    probe_iter = iter(train_loader)
+    history: list[dict[str, float]] = []
+
+    model.train()
+    for probe_step in range(1, decay_length + 1):
+        optimizer.zero_grad(set_to_none=True)
+        step_loss = 0.0
+        for _ in range(grad_accum):
+            try:
+                batch = next(probe_iter)
+            except StopIteration:
+                probe_iter = iter(train_loader)
+                batch = next(probe_iter)
+            batch = _batch_to_device(batch, device, context_length)
+            with _autocast_context(device, mixed_precision):
+                outputs = model(**batch)
+                loss = outputs.loss / grad_accum
+            loss.backward()
+            step_loss += float(loss.detach().cpu())
+        if max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), float(max_grad_norm))
+        optimizer.step()
+        probe_scheduler.step()
+
+        if probe_step % eval_interval == 0 or probe_step == decay_length:
+            val_loss = evaluate(
+                model,
+                valid_loader,
+                device,
+                max_eval_batches,
+                mixed_precision,
+                context_length,
+            )
+            history.append(
+                {
+                    "probe_decay_step": probe_step,
+                    "probe_train_loss": step_loss,
+                    "probe_validation_loss": val_loss,
+                    "probe_learning_rate": probe_scheduler.get_last_lr()[0],
+                }
+            )
+            model.train()
+
+    final_val_loss = history[-1]["probe_validation_loss"]
+    model.load_state_dict(saved_model)
+    optimizer.load_state_dict(saved_optim)
+    return final_val_loss, history
+
+
+def _run_decay_amount_sweep(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    train_loader: DataLoader,
+    valid_loader: DataLoader,
+    amount_cfg: dict[str, Any],
+    training: dict[str, Any],
+    device: torch.device,
+    mixed_precision: str,
+    context_length: int,
+) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+    """Run several short decay probes from the same snapshot, varying final LR ratio."""
+    decay_length = int(amount_cfg["decay_length"])
+    decay_type = amount_cfg.get("decay_type", "inverse_proportional")
+    eval_interval = int(amount_cfg.get("probe_eval_interval_steps", 5))
+    max_probe_eval_batches = int(amount_cfg.get("max_probe_eval_batches", training.get("max_eval_batches", 20)))
+    ratios = [float(ratio) for ratio in amount_cfg["final_lr_ratios"]]
+
+    rows = []
+    history_rows = []
+    for final_lr_ratio in ratios:
+        probe_cfg = {
+            "decay_length": decay_length,
+            "final_lr_ratio": final_lr_ratio,
+            "decay_type": decay_type,
+            "probe_eval_interval_steps": eval_interval,
+            "max_probe_eval_batches": max_probe_eval_batches,
+        }
+        val_loss, history = _run_probe_decay_with_history(
+            model,
+            optimizer,
+            train_loader,
+            valid_loader,
+            probe_cfg,
+            training,
+            device,
+            mixed_precision,
+            context_length,
+        )
+        rows.append(
+            {
+                "decay_length": decay_length,
+                "final_lr_ratio": final_lr_ratio,
+                "probe_final_val_loss": val_loss,
+            }
+        )
+        for history_row in history:
+            history_rows.append(
+                {
+                    "decay_length": decay_length,
+                    "final_lr_ratio": final_lr_ratio,
+                    **history_row,
+                }
+            )
+    return rows, history_rows
+
+
 def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[str, Any]) -> None:
     registry_path = Path("experiments") / "registry.csv"
     registry_path.parent.mkdir(parents=True, exist_ok=True)
@@ -348,8 +478,13 @@ def train(config_path: str, run_name: str | None = None) -> None:
     sweep_cfg = training.get("decay_sweep", {})
     sweep_enabled = bool(sweep_cfg.get("enabled", False))
     probe_steps = set(int(s) for s in sweep_cfg.get("probe_steps", []))
+    amount_sweep_cfg = training.get("decay_amount_sweep", {})
+    amount_sweep_enabled = bool(amount_sweep_cfg.get("enabled", False))
+    amount_probe_steps = set(int(s) for s in amount_sweep_cfg.get("probe_steps", []))
     log_path = output_paths["logs"] / "metrics.jsonl"
     sweep_log_path = output_paths["logs"] / "decay_sweep.jsonl"
+    amount_sweep_log_path = output_paths["logs"] / "decay_amount_sweep.jsonl"
+    amount_trajectory_log_path = output_paths["logs"] / "decay_amount_trajectory.jsonl"
     train_iter = iter(train_loader)
     tokens_seen = 0
     running_loss = 0.0
@@ -513,6 +648,47 @@ def train(config_path: str, run_name: str | None = None) -> None:
                     "learning_rate": lr,
                 },
             )
+
+        if amount_sweep_enabled and step in amount_probe_steps:
+            amount_rows, amount_history_rows = _run_decay_amount_sweep(
+                model,
+                optimizer,
+                train_loader,
+                valid_loader,
+                amount_sweep_cfg,
+                training,
+                device,
+                mixed_precision,
+                context_length,
+            )
+            for amount_row in amount_rows:
+                _append_jsonl(
+                    amount_sweep_log_path,
+                    {
+                        "probe_start_step": step,
+                        "train_loss": step_loss,
+                        "loss_variance": loss_variance,
+                        "loss_oscillation": loss_oscillation,
+                        "loss_improvement_rate": loss_improvement_rate,
+                        "grad_norm": grad_norm,
+                        "grad_snr": grad_metrics["grad_snr"],
+                        "grad_weight_ratio": grad_metrics["grad_weight_ratio"],
+                        "grad_cosine_sim": grad_metrics["grad_cosine_sim"],
+                        "adam_v_norm": grad_metrics["adam_v_norm"],
+                        "weight_norm": grad_metrics["weight_norm"],
+                        "param_update_norm": post_metrics["param_update_norm"],
+                        "learning_rate": lr,
+                        **amount_row,
+                    },
+                )
+            for history_row in amount_history_rows:
+                _append_jsonl(
+                    amount_trajectory_log_path,
+                    {
+                        "probe_start_step": step,
+                        **history_row,
+                    },
+                )
 
     final_validation_loss = evaluate(
         model,
