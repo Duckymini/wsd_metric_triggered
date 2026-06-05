@@ -1,0 +1,10 @@
+{
+  "run_id": "cosine_debug_20260604-080734",
+  "final_train_loss": 9.458522691726685,
+  "final_validation_loss": 8.92782802581787,
+  "tokens_seen": 409600,
+  "final_learning_rate": 2.9999999999999997e-05,
+  "total_seconds": 21.523278951644897,
+  "device": "cuda",
+  "schedule": "cosine"
+}

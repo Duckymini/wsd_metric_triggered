@@ -1,0 +1,10 @@
+{
+  "run_id": "cosine_0_1b_fineweb_2_6b_20260604-085109",
+  "final_train_loss": 4.673206684518606,
+  "final_validation_loss": 3.815857672691345,
+  "tokens_seen": 2621440000,
+  "final_learning_rate": 5.9999999999999995e-05,
+  "total_seconds": 43868.179368019104,
+  "device": "cuda",
+  "schedule": "cosine"
+}

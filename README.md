@@ -66,3 +66,36 @@ python scripts/check_imports.py
 ```
 
 Use `environment.yml` locally and `environment-h200.yml` only on the Linux GPU machine.
+
+## Baseline Runs
+
+Launch a WSD debug run:
+
+```bash
+bash scripts/run_wsd_debug.sh
+```
+
+Launch a cosine debug run:
+
+```bash
+bash scripts/run_cosine_debug.sh
+```
+
+Equivalent direct commands:
+
+```bash
+python -m src.train --config configs/wsd_debug.yaml
+python -m src.train --config configs/cosine_debug.yaml
+```
+
+Each run writes:
+
+```text
+checkpoints/<run_id>/checkpoint_step_*.pt
+logs/<run_id>/metrics.jsonl
+results/<run_id>/config.yaml
+results/<run_id>/source_config.yaml
+results/<run_id>/final_metrics.json
+```
+
+The run is also appended to `experiments/registry.csv`.

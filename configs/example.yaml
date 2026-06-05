@@ -1,4 +1,4 @@
-# Placeholder only. Replace with real experiment configs when coding starts.
+# Minimal example. Use configs/wsd_debug.yaml or configs/cosine_debug.yaml for real runs.
 run_id: TBD
 model: 30M
 dataset: TBD
