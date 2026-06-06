@@ -1,0 +1,10 @@
+{
+  "run_id": "cosine_intermediate_paper_decay_20260605-154448",
+  "final_train_loss": 5.237454313740134,
+  "final_validation_loss": 4.470232286453247,
+  "tokens_seen": 524288000,
+  "final_learning_rate": 5.999999999999999e-06,
+  "total_seconds": 5554.587115287781,
+  "device": "cuda",
+  "schedule": "cosine"
+}
