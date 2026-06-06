@@ -54,7 +54,7 @@ Recommended setup on your Mac:
 ```bash
 conda env create -f environment.yml
 conda activate wsd-decay
-python scripts/check_imports.py
+python -m src.check_imports
 ```
 
 Setup on the H200 GPU machine:
@@ -62,7 +62,7 @@ Setup on the H200 GPU machine:
 ```bash
 conda env create -f environment-h200.yml
 conda activate wsd-decay-h200
-python scripts/check_imports.py
+python -m src.check_imports
 ```
 
 Use `environment.yml` locally and `environment-h200.yml` only on the Linux GPU machine.

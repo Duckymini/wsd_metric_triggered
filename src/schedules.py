@@ -71,7 +71,14 @@ def build_lr_scheduler(optimizer: Optimizer, schedule_config: dict[str, Any]) ->
     schedule_type = schedule_config["type"].lower()
     warmup_steps = int(schedule_config.get("warmup_steps", 0))
 
-    if schedule_type in {"wsd", "wsd_s"}:
+    if schedule_type == "warmup_stable":
+
+        def lr_lambda(step: int) -> float:
+            if step < warmup_steps:
+                return _linear_warmup(step, warmup_steps)
+            return 1.0
+
+    elif schedule_type in {"wsd", "wsd_s"}:
         final_lr_ratio = float(schedule_config.get("final_lr_ratio", 0.1))
         if not 0.0 < final_lr_ratio <= 1.0:
             raise ValueError("WSD final_lr_ratio must be in (0, 1].")
@@ -110,6 +117,9 @@ def build_lr_scheduler(optimizer: Optimizer, schedule_config: dict[str, Any]) ->
             return _cosine_decay(progress, min_lr_ratio)
 
     else:
-        raise ValueError(f"Unknown schedule type '{schedule_type}'. Expected 'wsd', 'wsd_s', or 'cosine'.")
+        raise ValueError(
+            f"Unknown schedule type '{schedule_type}'. "
+            "Expected 'warmup_stable', 'wsd', 'wsd_s', or 'cosine'."
+        )
 
     return LambdaLR(optimizer, lr_lambda=lr_lambda)
