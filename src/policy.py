@@ -17,8 +17,7 @@ def check_policy(
     hasn't dropped below the gate, returns False immediately.
 
     Args:
-        policy_name: One of 'loss_variance_low', 'val_loss_plateau',
-                     'grad_snr_low', 'combined'.
+        policy_name: One of 'loss_variance_low', 'grad_snr_low', 'combined'.
         metrics_history: Deque of per-step train metric dicts (populated every
                          training step). Each dict has at minimum 'loss_variance',
                          'grad_snr', 'loss_oscillation', 'loss_improvement_rate'.
@@ -30,15 +29,13 @@ def check_policy(
 
     if policy_name == "loss_variance_low":
         return _check_loss_variance_low(metrics_history, policy_cfg)
-    if policy_name == "val_loss_plateau":
-        return _check_val_loss_plateau(val_history, policy_cfg)
     if policy_name == "grad_snr_low":
         return _check_grad_snr_low(metrics_history, policy_cfg)
     if policy_name == "combined":
         return _check_loss_variance_low(metrics_history, policy_cfg) and _check_grad_snr_low(
             metrics_history, policy_cfg
         )
-    raise ValueError(f"Unknown policy '{policy_name}'. Expected one of: loss_variance_low, val_loss_plateau, grad_snr_low, combined.")
+    raise ValueError(f"Unknown policy '{policy_name}'. Expected one of: loss_variance_low, grad_snr_low, combined.")
 
 
 def _check_val_loss_gate(
@@ -62,18 +59,6 @@ def _check_loss_variance_low(
     threshold = float(policy_cfg["loss_variance_threshold"])
     return metrics_history[-1].get("loss_variance", float("inf")) < threshold
 
-
-def _check_val_loss_plateau(
-    val_history: list[tuple[int, float]],
-    policy_cfg: dict[str, Any],
-) -> bool:
-    """Trigger when val loss has not improved by min_delta over the last window evals."""
-    window = int(policy_cfg.get("val_plateau_window", 5))
-    min_delta = float(policy_cfg.get("val_plateau_min_delta", 0.001))
-    if len(val_history) < window:
-        return False
-    recent = val_history[-window:]
-    return (max(v for _, v in recent) - min(v for _, v in recent)) < min_delta
 
 
 def _check_grad_snr_low(
