@@ -37,7 +37,7 @@ training:
   eval_interval_steps: 50
   save_interval_steps: 1000
   max_eval_batches: 25
-  notes: "policy decay — loss_variance_low trigger from step 4900, decay_length=700, final_lr_ratio=0.25. Thresholds: calibrate from p10 of steps 6000-7000 on wsd_intermediate_10k logs."
+  notes: "policy decay — loss_variance_low trigger from step 4900, decay_length=700, final_lr_ratio=0.25. Thresholds from p10 of steps 6000-7000 on wsd_intermediate_10k."
   policy_decay:
     enabled: true
     policy: loss_variance_low
@@ -45,8 +45,8 @@ training:
     decay_length: 700
     final_lr_ratio: 0.25
     decay_type: inverse_proportional
-    val_loss_gate: TBD   # replace with p10 val_loss at step ~6000 from wsd_intermediate_10k logs
-    loss_variance_threshold: TBD  # replace with p10 loss_variance between steps 6000-7000
+    val_loss_gate: 3.585
+    loss_variance_threshold: 0.132
 
 schedule:
   type: warmup_stable
