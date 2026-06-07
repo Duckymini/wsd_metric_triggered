@@ -23,7 +23,8 @@ from transformers import AutoTokenizer, default_data_collator, set_seed
 from src.config import load_config, save_config
 from src.data import load_lm_datasets
 from src.model import build_llama_model
-from src.schedules import build_lr_scheduler, build_probe_scheduler
+from src.policy import check_policy
+from src.schedules import build_lr_scheduler, build_policy_decay_scheduler, build_probe_scheduler
 
 
 def _device() -> torch.device:
@@ -355,7 +356,7 @@ def _run_decay_amount_sweep(
     return rows, history_rows
 
 
-def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[str, Any]) -> None:
+def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[str, Any], trigger: str = "fixed") -> None:
     registry_path = Path("experiments") / "registry.csv"
     registry_path.parent.mkdir(parents=True, exist_ok=True)
     training = config["training"]
@@ -389,7 +390,7 @@ def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[st
         "decay_start": decay_start,
         "decay_length": decay_length,
         "final_lr_ratio": final_lr_ratio,
-        "trigger": "fixed",
+        "trigger": trigger,
         "seed": config.get("seed", ""),
         "result": final_metrics.get("final_validation_loss"),
         "notes": training.get("notes", ""),
@@ -485,6 +486,21 @@ def train(config_path: str, run_name: str | None = None) -> None:
     sweep_log_path = output_paths["logs"] / "decay_sweep.jsonl"
     amount_sweep_log_path = output_paths["logs"] / "decay_amount_sweep.jsonl"
     amount_trajectory_log_path = output_paths["logs"] / "decay_amount_trajectory.jsonl"
+    # --- Policy decay setup ---
+    policy_cfg = training.get("policy_decay", {})
+    policy_enabled = bool(policy_cfg.get("enabled", False))
+    policy_name = policy_cfg.get("policy", None)
+    earliest_trigger = int(policy_cfg.get("earliest_trigger_step", 3500))
+    policy_decay_length = int(policy_cfg.get("decay_length", 500))
+    policy_final_lr_ratio = float(policy_cfg.get("final_lr_ratio", 0.25))
+    policy_decay_type = policy_cfg.get("decay_type", "inverse_proportional")
+    policy_warmup_steps = int(config["schedule"].get("warmup_steps", 0))
+    policy_triggered = False
+    policy_trigger_step: int | None = None
+    metrics_history: deque[dict[str, float]] = deque(maxlen=100)
+    val_loss_history: list[tuple[int, float]] = []
+    policy_trigger_log_path = output_paths["logs"] / "policy_trigger.json"
+
     train_iter = iter(train_loader)
     tokens_seen = 0
     running_loss = 0.0
@@ -569,6 +585,15 @@ def train(config_path: str, run_name: str | None = None) -> None:
             else 0.0
         )
 
+        if policy_enabled and not policy_triggered:
+            metrics_history.append({
+                "step": step,
+                "loss_variance": loss_variance,
+                "grad_snr": grad_metrics["grad_snr"],
+                "loss_oscillation": loss_oscillation,
+                "loss_improvement_rate": loss_improvement_rate,
+            })
+
         lr = scheduler.get_last_lr()[0]
         progress.set_postfix(loss=f"{step_loss:.4f}", lr=f"{lr:.2e}")
 
@@ -613,6 +638,41 @@ def train(config_path: str, run_name: str | None = None) -> None:
                     "elapsed_seconds": time.time() - start_time,
                 },
             )
+            if policy_enabled and not policy_triggered:
+                val_loss_history.append((step, valid_loss))
+
+        if policy_enabled and not policy_triggered and step >= earliest_trigger and policy_name:
+            if check_policy(policy_name, metrics_history, val_loss_history, policy_cfg):
+                policy_triggered = True
+                policy_trigger_step = step
+                if step + policy_decay_length > max_steps:
+                    import warnings
+                    warnings.warn(
+                        f"Policy triggered at step {step} but decay would end at "
+                        f"{step + policy_decay_length} > max_steps {max_steps}. "
+                        "Training will end mid-decay."
+                    )
+                scheduler = build_policy_decay_scheduler(
+                    optimizer,
+                    trigger_step=step,
+                    decay_length=policy_decay_length,
+                    final_lr_ratio=policy_final_lr_ratio,
+                    warmup_steps=policy_warmup_steps,
+                    decay_type=policy_decay_type,
+                )
+                with policy_trigger_log_path.open("w", encoding="utf-8") as _f:
+                    json.dump(
+                        {
+                            "policy": policy_name,
+                            "trigger_step": step,
+                            "decay_end_step": step + policy_decay_length,
+                            "final_lr_ratio": policy_final_lr_ratio,
+                            "decay_length": policy_decay_length,
+                            "metrics_at_trigger": dict(metrics_history[-1]) if metrics_history else {},
+                        },
+                        _f,
+                        indent=2,
+                    )
 
         if step % save_interval == 0 or step == max_steps:
             _save_checkpoint(
@@ -712,7 +772,12 @@ def train(config_path: str, run_name: str | None = None) -> None:
     with results_path.open("w", encoding="utf-8") as f:
         json.dump(final_metrics, f, indent=2)
 
-    _append_registry(run_id, config, final_metrics)
+    _append_registry(
+        run_id,
+        config,
+        final_metrics,
+        trigger=policy_name if (policy_enabled and policy_triggered) else "fixed",
+    )
     print(f"Finished run: {run_id}")
     print(f"Logs: {log_path}")
     print(f"Checkpoints: {output_paths['checkpoints']}")
