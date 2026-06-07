@@ -45,7 +45,7 @@ training:
     decay_length: 500
     final_lr_ratio: 0.25
     decay_type: inverse_proportional
-    val_loss_gate: 3.9
+    val_loss_gate: 3.64
     val_plateau_window: 5
     val_plateau_min_delta: 0.001
 
