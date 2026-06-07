@@ -67,6 +67,45 @@ def build_probe_scheduler(
     return LambdaLR(optimizer, lr_lambda=lr_lambda)
 
 
+def build_policy_decay_scheduler(
+    optimizer: Optimizer,
+    trigger_step: int,
+    decay_length: int,
+    final_lr_ratio: float,
+    warmup_steps: int,
+    decay_type: str = "inverse_proportional",
+) -> LambdaLR:
+    """Scheduler for mid-training policy-triggered decay.
+
+    Constructed at the moment the policy fires (step=trigger_step). Uses
+    last_epoch=trigger_step-1 so PyTorch's internal step() call in __init__
+    lands at last_epoch=trigger_step with lr_lambda(trigger_step)=1.0 —
+    no LR discontinuity and no warmup restart.
+
+    Requires that a previous LambdaLR was already attached to the optimizer
+    (which sets initial_lr in param_groups). In train.py this is always true
+    because build_lr_scheduler is called first.
+    """
+    decay_type = decay_type.lower()
+    decay_end = trigger_step + decay_length
+
+    def lr_lambda(step: int) -> float:
+        if step < warmup_steps:
+            return _linear_warmup(step, warmup_steps)
+        if step <= trigger_step:
+            return 1.0
+        if step <= decay_end:
+            progress = float(step - trigger_step) / float(decay_length)
+            if decay_type == "inverse_proportional":
+                return _inverse_proportional_decay(progress, final_lr_ratio)
+            if decay_type == "cosine":
+                return _cosine_decay(progress, final_lr_ratio)
+            raise ValueError(f"Unknown decay_type '{decay_type}'.")
+        return final_lr_ratio
+
+    return LambdaLR(optimizer, lr_lambda=lr_lambda, last_epoch=trigger_step - 1)
+
+
 def build_lr_scheduler(optimizer: Optimizer, schedule_config: dict[str, Any]) -> LambdaLR:
     schedule_type = schedule_config["type"].lower()
     warmup_steps = int(schedule_config.get("warmup_steps", 0))
