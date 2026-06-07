@@ -46,7 +46,7 @@ training:
     final_lr_ratio: 0.25
     decay_type: inverse_proportional
     val_loss_gate: 3.64
-    grad_snr_threshold: 1.10
+    grad_snr_threshold: 0.95
 
 schedule:
   type: warmup_stable

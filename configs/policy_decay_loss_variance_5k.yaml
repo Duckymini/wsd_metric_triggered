@@ -46,7 +46,7 @@ training:
     final_lr_ratio: 0.25
     decay_type: inverse_proportional
     val_loss_gate: 3.64
-    loss_variance_threshold: 0.13
+    loss_variance_threshold: 0.125
 
 schedule:
   type: warmup_stable
