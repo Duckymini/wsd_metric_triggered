@@ -10,12 +10,8 @@ from transformers import AutoTokenizer
 from src.model import build_llama_model
 
 PROMPTS = [
-    "The history of machine learning begins",
-    "In order to train a large language model, you need",
-    "The capital of France is Paris, and the capital of Germany is",
-    "Scientists recently discovered that",
+    "Jules Cesar is",
 ]
-
 
 def generate(model, tokenizer, device, prompt: str, max_new_tokens: int = 100,
              temperature: float = 0.8, top_p: float = 0.9) -> str:
