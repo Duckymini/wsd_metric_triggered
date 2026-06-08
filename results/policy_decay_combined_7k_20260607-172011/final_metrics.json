@@ -1,0 +1,10 @@
+{
+  "run_id": "policy_decay_combined_7k_20260607-172011",
+  "final_train_loss": 3.9661671637435045,
+  "final_validation_loss": 3.4938618755340576,
+  "tokens_seen": 3670016000,
+  "final_learning_rate": 0.00015,
+  "total_seconds": 38723.65674638748,
+  "device": "cuda",
+  "schedule": "warmup_stable"
+}
