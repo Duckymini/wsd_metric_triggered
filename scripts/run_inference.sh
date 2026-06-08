@@ -9,9 +9,4 @@ export HF_DATASETS_CACHE=/scratch/hf-cache/datasets
 export TOKENIZERS_PARALLELISM=false
 mkdir -p "${TRANSFORMERS_CACHE}" "${HF_DATASETS_CACHE}"
 
-jupyter nbconvert --to notebook --execute \
-  --ExecutePreprocessor.timeout=300 \
-  --output notebooks/inference_out.ipynb \
-  notebooks/inference.ipynb
-
-echo "Done. Output saved to notebooks/inference_out.ipynb"
+python3 src/inference.py "$@"
