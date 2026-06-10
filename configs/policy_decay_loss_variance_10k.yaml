@@ -43,9 +43,9 @@ training:
     policy: loss_variance_low
     step_gate_ratio: 0.7
     lookback_ratio: 0.1
-    decay_length: 1000
     final_lr_ratio: 0.1
     decay_type: inverse_proportional
+    threshold_percentile: 3.0
 
 schedule:
   type: warmup_stable

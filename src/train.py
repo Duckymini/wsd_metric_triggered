@@ -495,9 +495,9 @@ def train(config_path: str, run_name: str | None = None) -> None:
     gate_step = max(1, int(step_gate_ratio * max_steps))
     lookback_ratio = float(policy_cfg.get("lookback_ratio", 0.1))
     lookback_steps = max(1, int(lookback_ratio * max_steps))
-    policy_decay_length = int(policy_cfg.get("decay_length", 500))
     policy_final_lr_ratio = float(policy_cfg.get("final_lr_ratio", 0.25))
     policy_decay_type = policy_cfg.get("decay_type", "inverse_proportional")
+    threshold_percentile = float(policy_cfg.get("threshold_percentile", 5.0))
     policy_warmup_steps = int(config["schedule"].get("warmup_steps", 0))
     policy_triggered = False
     policy_trigger_step: int | None = None
@@ -642,7 +642,7 @@ def train(config_path: str, run_name: str | None = None) -> None:
                 },
             )
         if policy_enabled and not policy_triggered and step == gate_step and policy_name:
-            computed = compute_percentile_thresholds(metrics_history, policy_name, percentile=5.0)
+            computed = compute_percentile_thresholds(metrics_history, policy_name, percentile=threshold_percentile)
             if len(metrics_history) < lookback_steps:
                 warnings.warn(
                     f"Policy gate reached at step {gate_step} but metrics_history has only "
@@ -655,12 +655,7 @@ def train(config_path: str, run_name: str | None = None) -> None:
             if check_policy(policy_name, metrics_history, policy_cfg):
                 policy_triggered = True
                 policy_trigger_step = step
-                if step + policy_decay_length > max_steps:
-                    warnings.warn(
-                        f"Policy triggered at step {step} but decay would end at "
-                        f"{step + policy_decay_length} > max_steps {max_steps}. "
-                        "Training will end mid-decay."
-                    )
+                policy_decay_length = max_steps - step
                 scheduler = build_policy_decay_scheduler(
                     optimizer,
                     trigger_step=step,
