@@ -37,15 +37,15 @@ training:
   eval_interval_steps: 50
   save_interval_steps: 1000
   max_eval_batches: 25
-  notes: "C4 external validation - loss_variance_low policy, gate at 70% of steps, lookback 10%, p5 threshold, decay_length=1000, final_lr_ratio=0.1."
+  notes: "C4 external validation - loss_variance_low policy, gate at 70% of steps, lookback 10%, p3 threshold, adaptive decay to end, final_lr_ratio=0.1."
   policy_decay:
     enabled: true
     policy: loss_variance_low
     step_gate_ratio: 0.7
     lookback_ratio: 0.1
-    decay_length: 1000
     final_lr_ratio: 0.1
     decay_type: inverse_proportional
+    threshold_percentile: 3.0
 
 schedule:
   type: warmup_stable
