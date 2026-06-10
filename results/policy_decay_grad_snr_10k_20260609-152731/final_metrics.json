@@ -1,0 +1,10 @@
+{
+  "run_id": "policy_decay_grad_snr_10k_20260609-152731",
+  "final_train_loss": 3.8410967223497106,
+  "final_validation_loss": 3.4460171985626222,
+  "tokens_seen": 5242880000,
+  "final_learning_rate": 5.9999999999999995e-05,
+  "total_seconds": 55110.43216085434,
+  "device": "cuda",
+  "schedule": "warmup_stable"
+}

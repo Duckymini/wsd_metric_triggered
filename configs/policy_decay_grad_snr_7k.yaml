@@ -42,9 +42,9 @@ training:
     enabled: true
     policy: grad_snr_low
     earliest_trigger_step: 4900
-    decay_length: 700
     final_lr_ratio: 0.25
     decay_type: inverse_proportional
+    threshold_percentile: 5.0
     val_loss_gate: 3.585
     grad_snr_threshold: 0.931
 
