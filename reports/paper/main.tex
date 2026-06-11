@@ -25,8 +25,7 @@
   stable training phase from a short, sharp decay. Yet the key hyperparameters
   governing this decay—its timing, duration, and final learning rate ratio—remain
   largely empirical and are unlikely to generalize across models and datasets.
-  In this work, we study the relationship between online training signals
-  (loss variance and gradient signal-to-noise ratio) and the optimal decay
+  In this work, we study the relationship between online training signals and the optimal decay
   trigger in WSD, using a LLaMA-style model trained on FineWeb.
   We reproduce scheduler comparison results from prior work, analyze how decay
   timing and magnitude affect final validation loss, and propose adaptive
@@ -167,22 +166,38 @@ pre-decay signals and post-decay performance.
 \subsubsection{Exp.\,4 — Adaptive Decay Policies}
 Based on the correlations found in Exp.\,3, we propose three adaptive policies
 that monitor training in real time and trigger decay automatically once the
-signal indicates the sweet spot has been reached:
+signal indicates the sweet spot has been reached.
+
+All policies share the same gating and threshold mechanism.
+To avoid premature decay, a \emph{gate step} of 7,000 (70\% of total steps)
+is enforced: no policy can fire before this point.
+At gate time, we collect metrics over a \emph{lookback window} spanning the
+preceding 10\% of total steps (1,000 steps), which provides a stable
+empirical distribution of each signal under near-converged stable-phase
+dynamics.
+Trigger thresholds are then set at the \textbf{3rd percentile} of this
+distribution.
+This low percentile was chosen empirically: it selects only the most
+unusually quiet moments—where loss variance or gradient SNR has dropped to
+a level rarely seen throughout the stable phase—without being so strict that
+the condition never fires.
+In practice this strikes a good balance between sensitivity (triggering
+close to the true sweet spot) and robustness (ignoring transient dips).
+With thresholds fixed, each policy monitors the live metric stream and fires
+as soon as the condition is met:
 \begin{itemize}
   \item \textbf{Loss-variance policy}: triggers when the current
-        \texttt{loss\_variance} falls below the 3rd percentile of values
-        observed in the preceding lookback window (10\% of total steps).
-  \item \textbf{Grad-SNR policy}: analogously triggers on the 3rd percentile
-        of \texttt{grad\_snr}.
+        \texttt{loss\_variance} falls below the 3rd-percentile threshold
+        derived from the lookback window.
+  \item \textbf{Grad-SNR policy}: analogously triggers when \texttt{grad\_snr}
+        falls below its 3rd-percentile threshold.
   \item \textbf{Combined policy}: requires \emph{both} conditions
-        simultaneously.
+        simultaneously, providing the most conservative trigger.
 \end{itemize}
-All policies are gated: they cannot fire before 70\% of total steps (7,000),
-to avoid premature decay. Decay length is fixed at 1,000 steps with final LR
-ratio 0.1. Percentile thresholds are computed from the lookback window at
-gate time (step 7,000). We compare each policy against three fixed baselines
-that start decay at 70\%, 80\%, and 90\% of steps respectively—the last
-being the setting recommended by~\citet{wen2024river}.
+Decay length is fixed at 1,000 steps with final LR ratio 0.1.
+We compare each policy against three fixed baselines that start decay at
+70\%, 80\%, and 90\% of steps respectively—the last being the setting
+recommended by~\citet{wen2024river}.
 
 
 % ============================================================
