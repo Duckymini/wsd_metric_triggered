@@ -1,0 +1,10 @@
+{
+  "run_id": "c4_policy_decay_baseline_10k_8k_20260610-081109",
+  "final_train_loss": 3.809142074004747,
+  "final_validation_loss": 3.448760108947754,
+  "tokens_seen": 5242880000,
+  "final_learning_rate": 5.9999999999999995e-05,
+  "total_seconds": 58962.51902270317,
+  "device": "cuda",
+  "schedule": "wsd_s"
+}
