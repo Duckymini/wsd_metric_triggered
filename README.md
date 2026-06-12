@@ -28,38 +28,40 @@ conda env create -f environment.yml
 conda activate wsd-decay
 ```
 
-From the repository root, make the local `src/` package importable for the current terminal session:
+There are two equivalent ways to launch an experiment. Choose one depending on whether you prefer running the Python command directly or using the provided bash scripts.
+
+### Option A: Run Directly From the Terminal
+
+This option does not require editing any `.sh` file. From the repository root, make the local `src/` package importable for the current terminal session, then run training:
 
 ```bash
+cd /path/to/your/optimisation
 export PYTHONPATH="$PWD:${PYTHONPATH:-}"
+python -m src.train --config configs/wsd_intermediate_10k.yaml
 ```
 
-This command is not a file to edit in the repository. It is a terminal command to run before launching training if your environment does not already include the project root in `PYTHONPATH`. It lets commands such as `python -m src.train` import modules from `src/`.
+The `export PYTHONPATH=...` line is not a repository file to edit. It is a terminal command that lets Python import modules from `src/`, such as `src.train`, `src.data`, and `src.model`.
 
-The dataset is loaded through Hugging Face streaming. On a cluster or scratch machine, it is useful to tell Hugging Face where to store cache files:
+If you want Hugging Face cache files to go to a specific directory, set the cache variables in the same terminal before launching training:
 
 ```bash
-export HF_HOME=/scratch/hf-cache
-export TRANSFORMERS_CACHE=/scratch/hf-cache/transformers
-export HF_DATASETS_CACHE=/scratch/hf-cache/datasets
+export HF_HOME=/path/with/enough/space/hf-cache
+export TRANSFORMERS_CACHE="$HF_HOME/transformers"
+export HF_DATASETS_CACHE="$HF_HOME/datasets"
 export TOKENIZERS_PARALLELISM=false
 mkdir -p "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE"
 ```
 
-These are also terminal commands, not config files. The `/scratch/hf-cache` paths are examples from the GPU machine used for the experiments. If your machine does not have `/scratch`, replace `/scratch/hf-cache` with a directory that exists and has enough disk space, for example:
+### Option B: Run With a Bash Script
 
-```bash
-export HF_HOME="$HOME/.cache/huggingface"
-export TRANSFORMERS_CACHE="$HF_HOME/transformers"
-export HF_DATASETS_CACHE="$HF_HOME/datasets"
-```
-
-The launch scripts in `scripts/*.sh` already contain these exports, but the paths are machine-specific. Before running a script on a new machine, adapt the project path and cache path near the top of the script. For example, replace:
+The launch scripts in `scripts/*.sh` wrap the same Python command and set the environment variables for you. Before running a script on a new machine, adapt the machine-specific paths near the top of the script. For example, replace:
 
 ```bash
 cd /scratch/optimisation
 export PYTHONPATH=/scratch/optimisation:${PYTHONPATH:-}
 export HF_HOME=/scratch/hf-cache
+export TRANSFORMERS_CACHE=/scratch/hf-cache/transformers
+export HF_DATASETS_CACHE=/scratch/hf-cache/datasets
 ```
 
 with paths that match your machine:
@@ -72,19 +74,27 @@ export TRANSFORMERS_CACHE=/path/with/enough/space/hf-cache/transformers
 export HF_DATASETS_CACHE=/path/with/enough/space/hf-cache/datasets
 ```
 
-If you do not want to edit the `.sh` scripts, you can run training directly from the terminal. In that case, first go to the repository root and set `PYTHONPATH` for that terminal session:
+Then run the script:
 
 ```bash
-cd /path/to/your/optimisation
-export PYTHONPATH="$PWD:${PYTHONPATH:-}"
-python -m src.train --config configs/wsd_intermediate_10k.yaml
+bash scripts/run_wsd_intermediate_10k.sh
 ```
-
-This direct command does not use the paths inside `scripts/*.sh`; it only depends on the current terminal setup. You may still set `HF_HOME`, `TRANSFORMERS_CACHE`, and `HF_DATASETS_CACHE` first if you want Hugging Face cache files to go to a specific directory.
 
 For full reproducibility, keep the YAML config unchanged and only adapt machine-specific paths: the repository path in `cd`/`PYTHONPATH` and the Hugging Face cache path.
 
-If you want to use non-streaming datasets, local files, or a different train/validation split, update the `dataset` section in the YAML configs and, if needed, extend `src/data.py`. The current configs use `streaming: true` with `HuggingFaceFW/fineweb`, `config_name: sample-100BT`, and validation examples obtained from an offset in the training stream.
+### Dataset and Cache Notes
+
+The dataset is loaded through Hugging Face streaming. The current configs use `streaming: true` with `HuggingFaceFW/fineweb`, `config_name: sample-100BT`, and validation examples obtained from an offset in the training stream.
+
+The cache variables are terminal environment variables, not config files. They tell Hugging Face where to store dataset metadata, tokenizer files, and cached artifacts. Use a directory that exists and has enough disk space. A local-machine example is:
+
+```bash
+export HF_HOME="$HOME/.cache/huggingface"
+export TRANSFORMERS_CACHE="$HF_HOME/transformers"
+export HF_DATASETS_CACHE="$HF_HOME/datasets"
+```
+
+If you want to use non-streaming datasets, local files, or a different train/validation split, update the `dataset` section in the YAML configs and, if needed, extend `src/data.py`.
 
 ---
 
