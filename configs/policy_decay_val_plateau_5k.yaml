@@ -42,9 +42,9 @@ training:
     enabled: true
     policy: val_loss_plateau
     earliest_trigger_step: 3500
-    decay_length: 500
     final_lr_ratio: 0.25
     decay_type: inverse_proportional
+    threshold_percentile: 5.0
     val_loss_gate: 3.64
     val_plateau_window: 5
     val_plateau_min_delta: 0.001
