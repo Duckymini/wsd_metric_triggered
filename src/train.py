@@ -25,10 +25,23 @@ from src.config import load_config, save_config
 from src.data import load_lm_datasets
 from src.model import build_llama_model
 from src.policy import check_policy, compute_percentile_thresholds
-from src.schedules import build_lr_scheduler, build_policy_decay_scheduler, build_probe_scheduler
+from src.schedules import (
+    build_beta_scheduler,
+    build_lr_scheduler,
+    build_policy_decay_scheduler,
+    build_probe_scheduler,
+)
 
 
 def _device() -> torch.device:
+    """Choose the best available training device.
+
+    Args:
+        None.
+
+    Returns:
+        CUDA, MPS, or CPU torch device.
+    """
     if torch.cuda.is_available():
         return torch.device("cuda")
     if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
@@ -37,6 +50,14 @@ def _device() -> torch.device:
 
 
 def _configure_torch_for_device(device: torch.device) -> None:
+    """Configure PyTorch backend settings for the selected device.
+
+    Args:
+        device: Device selected for training.
+
+    Returns:
+        None.
+    """
     if device.type != "cuda":
         return
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -45,6 +66,15 @@ def _configure_torch_for_device(device: torch.device) -> None:
 
 
 def _autocast_context(device: torch.device, mixed_precision: str):
+    """Create the mixed-precision context for one forward pass.
+
+    Args:
+        device: Device used for training.
+        mixed_precision: Precision mode, such as "bf16", "fp16", or "none".
+
+    Returns:
+        A CUDA autocast context, or a no-op context.
+    """
     if device.type != "cuda" or mixed_precision == "none":
         return nullcontext()
     dtype = torch.float16 if mixed_precision == "fp16" else torch.bfloat16
@@ -52,12 +82,29 @@ def _autocast_context(device: torch.device, mixed_precision: str):
 
 
 def _make_run_id(config: dict[str, Any], override: str | None) -> str:
+    """Create a timestamped run identifier.
+
+    Args:
+        config: Full experiment config.
+        override: Optional run-name override from the CLI.
+
+    Returns:
+        Run id used for logs, checkpoints, and results.
+    """
     base = override or config.get("run_name", "debug_run")
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"{base}_{timestamp}"
 
 
 def _prepare_outputs(run_id: str) -> dict[str, Path]:
+    """Create output directories for one run.
+
+    Args:
+        run_id: Identifier for the current run.
+
+    Returns:
+        Mapping with checkpoints, logs, and results directories.
+    """
     paths = {
         "checkpoints": Path("checkpoints") / run_id,
         "logs": Path("logs") / run_id,
@@ -76,6 +123,19 @@ def _save_checkpoint(
     step: int,
     config: dict[str, Any],
 ) -> None:
+    """Save a training checkpoint.
+
+    Args:
+        path: Destination checkpoint path.
+        model: Model whose weights are saved.
+        optimizer: Optimizer state to save.
+        scheduler: LR scheduler state to save.
+        step: Current training step.
+        config: Experiment config to include in the checkpoint.
+
+    Returns:
+        None.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -90,6 +150,15 @@ def _save_checkpoint(
 
 
 def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    """Append one metrics row to a JSONL file.
+
+    Args:
+        path: JSONL file path.
+        row: JSON-serializable row to append.
+
+    Returns:
+        None.
+    """
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row) + "\n")
 
@@ -99,6 +168,16 @@ def _batch_to_device(
     device: torch.device,
     context_length: int,
 ) -> dict[str, torch.Tensor]:
+    """Move a batch to device after validating sequence length.
+
+    Args:
+        batch: Batch containing input_ids and labels tensors.
+        device: Target device.
+        context_length: Maximum sequence length supported by the model.
+
+    Returns:
+        Batch tensors moved to the target device.
+    """
     sequence_length = int(batch["input_ids"].shape[1])
     if sequence_length > context_length:
         raise ValueError(
@@ -117,6 +196,19 @@ def evaluate(
     mixed_precision: str,
     context_length: int,
 ) -> float:
+    """Evaluate validation loss.
+
+    Args:
+        model: Model to evaluate.
+        loader: Validation dataloader.
+        device: Device used for evaluation.
+        max_batches: Maximum number of batches to evaluate.
+        mixed_precision: Precision mode used during forward passes.
+        context_length: Maximum sequence length supported by the model.
+
+    Returns:
+        Mean validation loss over evaluated batches.
+    """
     model.eval()
     losses = []
     for batch_idx, batch in enumerate(loader):
@@ -136,7 +228,17 @@ def _compute_step_metrics(
     grad_norm: float,
     prev_grad_vec: torch.Tensor | None,
 ) -> tuple[dict[str, float], torch.Tensor]:
-    """Gradient and weight metrics computed after backward, before optimizer.step()."""
+    """Compute gradient and weight metrics before optimizer.step().
+
+    Args:
+        model: Model with populated gradients.
+        optimizer: Optimizer containing Adam state.
+        grad_norm: Total gradient norm for the current step.
+        prev_grad_vec: Flattened gradient vector from the previous step.
+
+    Returns:
+        Metrics dictionary and current flattened gradient vector.
+    """
     grad_mags = torch.stack([p.grad.norm() for p in model.parameters() if p.grad is not None])
     grad_snr = (grad_mags.mean() / (grad_mags.std() + 1e-8)).item()
 
@@ -168,63 +270,20 @@ def _compute_post_step_metrics(
     model: torch.nn.Module,
     prev_params_vec: torch.Tensor | None,
 ) -> tuple[dict[str, float], torch.Tensor]:
-    """Parameter update magnitude computed after optimizer.step()."""
+    """Compute parameter-update metrics after optimizer.step().
+
+    Args:
+        model: Model after the optimizer step.
+        prev_params_vec: Flattened parameter vector from the previous step.
+
+    Returns:
+        Metrics dictionary and current flattened parameter vector.
+    """
     current_params_vec = torch.cat([p.data.detach().flatten() for p in model.parameters()])
     param_update_norm = (
         (current_params_vec - prev_params_vec).norm().item() if prev_params_vec is not None else 0.0
     )
     return {"param_update_norm": param_update_norm}, current_params_vec
-
-
-def _run_probe_decay(
-    model: torch.nn.Module,
-    optimizer: torch.optim.Optimizer,
-    train_loader: DataLoader,
-    valid_loader: DataLoader,
-    sweep_cfg: dict[str, Any],
-    training: dict[str, Any],
-    device: torch.device,
-    mixed_precision: str,
-    context_length: int,
-) -> float:
-    """Snapshot model+optimizer, run a probe decay, evaluate, restore. Returns val loss."""
-    decay_length = int(sweep_cfg["decay_length"])
-    final_lr_ratio = float(sweep_cfg.get("final_lr_ratio", 0.1))
-    decay_type = sweep_cfg.get("decay_type", "inverse_proportional")
-    grad_accum = int(training.get("gradient_accumulation_steps", 1))
-    max_grad_norm = training.get("max_grad_norm")
-    max_eval_batches = int(training.get("max_eval_batches", 20))
-
-    saved_model = deepcopy(model.state_dict())
-    saved_optim = deepcopy(optimizer.state_dict())
-
-    probe_scheduler = build_probe_scheduler(optimizer, decay_length, final_lr_ratio, decay_type)
-    probe_iter = iter(train_loader)
-
-    model.train()
-    for _ in range(decay_length):
-        optimizer.zero_grad(set_to_none=True)
-        for _ in range(grad_accum):
-            try:
-                batch = next(probe_iter)
-            except StopIteration:
-                probe_iter = iter(train_loader)
-                batch = next(probe_iter)
-            batch = _batch_to_device(batch, device, context_length)
-            with _autocast_context(device, mixed_precision):
-                outputs = model(**batch)
-                loss = outputs.loss / grad_accum
-            loss.backward()
-        if max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), float(max_grad_norm))
-        optimizer.step()
-        probe_scheduler.step()
-
-    val_loss = evaluate(model, valid_loader, device, max_eval_batches, mixed_precision, context_length)
-
-    model.load_state_dict(saved_model)
-    optimizer.load_state_dict(saved_optim)
-    return val_loss
 
 
 def _run_probe_decay_with_history(
@@ -238,7 +297,22 @@ def _run_probe_decay_with_history(
     mixed_precision: str,
     context_length: int,
 ) -> tuple[float, list[dict[str, float]]]:
-    """Snapshot state, run one probe decay, log validation through decay, then restore."""
+    """Run one temporary decay probe with intermediate validation logs.
+
+    Args:
+        model: Model to snapshot, probe, and restore.
+        optimizer: Optimizer to snapshot, probe, and restore.
+        train_loader: Dataloader used for probe training steps.
+        valid_loader: Dataloader used for probe evaluation.
+        probe_cfg: Probe config for one final LR ratio.
+        training: Main training config.
+        device: Device used for probe training and evaluation.
+        mixed_precision: Precision mode used during forward passes.
+        context_length: Maximum sequence length supported by the model.
+
+    Returns:
+        Final probe validation loss and per-evaluation trajectory rows.
+    """
     decay_length = int(probe_cfg["decay_length"])
     final_lr_ratio = float(probe_cfg.get("final_lr_ratio", 0.1))
     decay_type = probe_cfg.get("decay_type", "inverse_proportional")
@@ -311,7 +385,22 @@ def _run_decay_amount_sweep(
     mixed_precision: str,
     context_length: int,
 ) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
-    """Run several short decay probes from the same snapshot, varying final LR ratio."""
+    """Run a decay-amount sweep from the current training state.
+
+    Args:
+        model: Model to probe and restore.
+        optimizer: Optimizer to probe and restore.
+        train_loader: Dataloader used for probe training steps.
+        valid_loader: Dataloader used for probe evaluation.
+        amount_cfg: Sweep config containing final LR ratios.
+        training: Main training config.
+        device: Device used for probe training and evaluation.
+        mixed_precision: Precision mode used during forward passes.
+        context_length: Maximum sequence length supported by the model.
+
+    Returns:
+        Summary rows and trajectory rows for all probed ratios.
+    """
     decay_length = int(amount_cfg["decay_length"])
     decay_type = amount_cfg.get("decay_type", "inverse_proportional")
     eval_interval = int(amount_cfg.get("probe_eval_interval_steps", 5))
@@ -358,6 +447,17 @@ def _run_decay_amount_sweep(
 
 
 def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[str, Any], trigger: str = "fixed") -> None:
+    """Append one completed run to the registry CSV.
+
+    Args:
+        run_id: Completed run identifier.
+        config: Full experiment config.
+        final_metrics: Final metrics written by training.
+        trigger: Trigger label recorded in the registry.
+
+    Returns:
+        None.
+    """
     registry_path = Path("experiments") / "registry.csv"
     registry_path.parent.mkdir(parents=True, exist_ok=True)
     training = config["training"]
@@ -420,6 +520,15 @@ def _append_registry(run_id: str, config: dict[str, Any], final_metrics: dict[st
 
 
 def train(config_path: str, run_name: str | None = None) -> None:
+    """Run one language-model training experiment.
+
+    Args:
+        config_path: Path to the YAML experiment config.
+        run_name: Optional run-name override.
+
+    Returns:
+        None.
+    """
     config = load_config(config_path)
     seed = int(config.get("seed", 1))
     set_seed(seed)
@@ -481,14 +590,10 @@ def train(config_path: str, run_name: str | None = None) -> None:
     if mixed_precision == "auto":
         mixed_precision = "bf16" if device.type == "cuda" else "none"
 
-    sweep_cfg = training.get("decay_sweep", {})
-    sweep_enabled = bool(sweep_cfg.get("enabled", False))
-    probe_steps = set(int(s) for s in sweep_cfg.get("probe_steps", []))
     amount_sweep_cfg = training.get("decay_amount_sweep", {})
     amount_sweep_enabled = bool(amount_sweep_cfg.get("enabled", False))
     amount_probe_steps = set(int(s) for s in amount_sweep_cfg.get("probe_steps", []))
     log_path = output_paths["logs"] / "metrics.jsonl"
-    sweep_log_path = output_paths["logs"] / "decay_sweep.jsonl"
     amount_sweep_log_path = output_paths["logs"] / "decay_amount_sweep.jsonl"
     amount_trajectory_log_path = output_paths["logs"] / "decay_amount_trajectory.jsonl"
     # --- Policy decay setup ---
@@ -699,31 +804,6 @@ def train(config_path: str, run_name: str | None = None) -> None:
                 config,
             )
 
-        if sweep_enabled and step in probe_steps:
-            probe_val_loss = _run_probe_decay(
-                model, optimizer, train_loader, valid_loader,
-                sweep_cfg, training, device, mixed_precision, context_length,
-            )
-            _append_jsonl(
-                sweep_log_path,
-                {
-                    "probe_start_step": step,
-                    "probe_final_val_loss": probe_val_loss,
-                    "train_loss": step_loss,
-                    "loss_variance": loss_variance,
-                    "loss_oscillation": loss_oscillation,
-                    "loss_improvement_rate": loss_improvement_rate,
-                    "grad_norm": grad_norm,
-                    "grad_snr": grad_metrics["grad_snr"],
-                    "grad_weight_ratio": grad_metrics["grad_weight_ratio"],
-                    "grad_cosine_sim": grad_metrics["grad_cosine_sim"],
-                    "adam_v_norm": grad_metrics["adam_v_norm"],
-                    "weight_norm": grad_metrics["weight_norm"],
-                    "param_update_norm": post_metrics["param_update_norm"],
-                    "learning_rate": lr,
-                },
-            )
-
         if amount_sweep_enabled and step in amount_probe_steps:
             amount_rows, amount_history_rows = _run_decay_amount_sweep(
                 model,
@@ -800,6 +880,14 @@ def train(config_path: str, run_name: str | None = None) -> None:
 
 
 def main() -> None:
+    """CLI entrypoint for training.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
     parser = argparse.ArgumentParser(description="Train a LLaMA-style language model baseline.")
     parser.add_argument("--config", required=True, help="Path to a YAML config.")
     parser.add_argument("--run-name", default=None, help="Optional run-name override.")

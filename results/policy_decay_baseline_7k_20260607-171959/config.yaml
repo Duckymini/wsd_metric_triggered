@@ -37,12 +37,12 @@ training:
   save_interval_steps: 1000
   max_eval_batches: 25
   notes: "policy decay baseline \u2014 fixed wsd_s decay at step 6300 (end 7000),\
-    \ final_lr_ratio=0.25"
+    \ final_lr_ratio=0.1"
 schedule:
   type: wsd_s
   warmup_steps: 100
   decay_type: inverse_proportional
-  final_lr_ratio: 0.25
+  final_lr_ratio: 0.1
   decays:
   - start_step: 6300
     end_step: 7000

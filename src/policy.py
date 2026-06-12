@@ -11,15 +11,15 @@ def check_policy(
     metrics_history: deque[dict[str, float]],
     policy_cfg: dict[str, Any],
 ) -> bool:
-    """Return True if the policy condition is met and decay should begin.
-
-    Thresholds must have been pre-computed and injected into policy_cfg
-    by compute_percentile_thresholds() before this is called.
+    """Evaluate whether a policy should start decay.
 
     Args:
-        policy_name: One of 'loss_variance_low', 'grad_snr_low', 'combined'.
-        metrics_history: Deque of per-step train metric dicts.
-        policy_cfg: The training.policy_decay config dict (with thresholds injected).
+        policy_name: Policy name from the config.
+        metrics_history: Recent per-step metrics.
+        policy_cfg: Policy config with thresholds.
+
+    Returns:
+        True when the policy condition is satisfied.
     """
     if policy_name == "loss_variance_low":
         return _check_loss_variance_low(metrics_history, policy_cfg)
@@ -37,13 +37,15 @@ def compute_percentile_thresholds(
     policy_name: str,
     percentile: float = 5.0,
 ) -> dict[str, float]:
-    """Compute percentile-based thresholds from the metrics accumulated so far.
+    """Compute percentile thresholds for a policy.
 
-    Called once at gate_step to auto-derive trigger thresholds from the
-    distribution of metrics observed in the lookback window.
+    Args:
+        metrics_history: Recent per-step metrics.
+        policy_name: Policy name determining which metrics are used.
+        percentile: Percentile used as the low-metric threshold.
 
-    Returns a dict with the relevant threshold keys (loss_variance_threshold,
-    grad_snr_threshold) for the given policy.
+    Returns:
+        Mapping of threshold names to values.
     """
     result: dict[str, float] = {}
     if not metrics_history:
@@ -66,7 +68,15 @@ def _check_loss_variance_low(
     metrics_history: deque[dict[str, float]],
     policy_cfg: dict[str, Any],
 ) -> bool:
-    """Trigger when the most recent loss_variance is below threshold."""
+    """Check the loss-variance policy condition.
+
+    Args:
+        metrics_history: Recent per-step metrics.
+        policy_cfg: Policy config containing loss_variance_threshold.
+
+    Returns:
+        True if the latest loss variance is below threshold.
+    """
     if not metrics_history:
         return False
     threshold = float(policy_cfg["loss_variance_threshold"])
@@ -77,7 +87,15 @@ def _check_grad_snr_low(
     metrics_history: deque[dict[str, float]],
     policy_cfg: dict[str, Any],
 ) -> bool:
-    """Trigger when the most recent grad_snr is below threshold."""
+    """Check the gradient-SNR policy condition.
+
+    Args:
+        metrics_history: Recent per-step metrics.
+        policy_cfg: Policy config containing grad_snr_threshold.
+
+    Returns:
+        True if the latest Grad SNR is below threshold.
+    """
     if not metrics_history:
         return False
     threshold = float(policy_cfg["grad_snr_threshold"])

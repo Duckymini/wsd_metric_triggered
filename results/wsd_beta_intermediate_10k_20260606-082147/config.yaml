@@ -36,12 +36,12 @@ training:
   eval_interval_steps: 50
   save_interval_steps: 2500
   max_eval_batches: 25
-  notes: "WSD-beta 10k steps \u2014 LR + beta1/beta2 co-decay (9000-10000), final_lr_ratio=0.01"
+  notes: "WSD-beta 10k steps \u2014 LR + beta1/beta2 co-decay (9000-10000), final_lr_ratio=0.1"
 schedule:
   type: wsd_beta
   warmup_steps: 100
   decay_type: inverse_proportional
-  final_lr_ratio: 0.01
+  final_lr_ratio: 0.1
   decays:
   - start_step: 9000
     end_step: 10000

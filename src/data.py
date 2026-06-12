@@ -10,6 +10,15 @@ from transformers import PreTrainedTokenizerBase
 
 
 def _pick_text_column(dataset: Dataset, configured_column: str | None) -> str:
+    """Choose the text column for a finite Hugging Face dataset.
+
+    Args:
+        dataset: Dataset split to inspect.
+        configured_column: Optional column name from config.
+
+    Returns:
+        The column name containing text.
+    """
     if configured_column is not None:
         if configured_column not in dataset.column_names:
             raise ValueError(f"Text column '{configured_column}' not found in {dataset.column_names}.")
@@ -23,16 +32,36 @@ def _pick_text_column(dataset: Dataset, configured_column: str | None) -> str:
 
 
 def _select_first(dataset: Dataset, max_samples: int | None) -> Dataset:
+    """Optionally truncate a finite dataset split.
+
+    Args:
+        dataset: Dataset split to truncate.
+        max_samples: Maximum rows to keep, or None for all rows.
+
+    Returns:
+        The original or truncated dataset split.
+    """
     if max_samples is None:
         return dataset
     return dataset.select(range(min(max_samples, len(dataset))))
 
 
 def _tokenize_for_packing(tokenizer: PreTrainedTokenizerBase, text: str | list[str]) -> dict[str, Any]:
+    """Tokenize raw text for later concatenation into fixed blocks.
+
+    Args:
+        tokenizer: Tokenizer used by the language model.
+        text: One text string or a batch of text strings.
+
+    Returns:
+        Tokenizer output containing input ids.
+    """
     return tokenizer(text, return_attention_mask=False, verbose=False)
 
 
 class StreamingTokenBlockDataset(TorchIterableDataset):
+    """Stream text samples and yield fixed-length causal-LM token blocks."""
+
     def __init__(
         self,
         source: Any,
@@ -41,6 +70,18 @@ class StreamingTokenBlockDataset(TorchIterableDataset):
         context_length: int,
         max_samples: int | None = None,
     ) -> None:
+        """Store streaming source and token-packing settings.
+
+        Args:
+            source: Iterable dataset source from Hugging Face datasets.
+            tokenizer: Tokenizer used to turn text into token ids.
+            text_column: Column containing raw text.
+            context_length: Number of tokens per emitted block.
+            max_samples: Optional maximum number of text samples to consume.
+
+        Returns:
+            None.
+        """
         self.source = source
         self.tokenizer = tokenizer
         self.text_column = text_column
@@ -48,6 +89,14 @@ class StreamingTokenBlockDataset(TorchIterableDataset):
         self.max_samples = max_samples
 
     def __iter__(self):
+        """Iterate over packed causal-LM examples.
+
+        Args:
+            None.
+
+        Returns:
+            An iterator yielding dicts with input_ids and labels tensors.
+        """
         worker = get_worker_info()
         buffer: list[int] = []
         samples_seen = 0
@@ -73,6 +122,14 @@ class StreamingTokenBlockDataset(TorchIterableDataset):
 
 
 def _expand_data_files(spec: Any) -> Any:
+    """Expand a data_files config entry.
+
+    Args:
+        spec: Plain data_files value or a dict with url_template/start/end.
+
+    Returns:
+        A value accepted by datasets.load_dataset(data_files=...).
+    """
     if isinstance(spec, dict) and "url_template" in spec:
         start = int(spec.get("start", 0))
         end = int(spec["end"])
@@ -81,6 +138,14 @@ def _expand_data_files(spec: Any) -> Any:
 
 
 def _resolve_data_files(data_files_config: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Resolve data_files entries for all configured splits.
+
+    Args:
+        data_files_config: Mapping from split name to file spec, or None.
+
+    Returns:
+        Resolved split-to-data-files mapping, or None.
+    """
     if data_files_config is None:
         return None
     return {split: _expand_data_files(spec) for split, spec in data_files_config.items()}
@@ -94,6 +159,19 @@ def _load_streaming_split(
     shuffle_buffer_size: int | None,
     data_files: dict[str, Any] | None,
 ):
+    """Load one streaming dataset split.
+
+    Args:
+        loader_name: Dataset loader name or path.
+        dataset_config_name: Optional Hugging Face dataset config name.
+        split_name: Split to load.
+        seed: Shuffle seed.
+        shuffle_buffer_size: Streaming shuffle buffer size, or None.
+        data_files: Optional resolved data files.
+
+    Returns:
+        A Hugging Face iterable dataset split.
+    """
     if data_files is None:
         dataset = load_dataset(loader_name, dataset_config_name, split=split_name, streaming=True)
     else:
@@ -109,6 +187,17 @@ def load_streaming_lm_datasets(
     context_length: int,
     seed: int,
 ) -> dict[str, StreamingTokenBlockDataset]:
+    """Build streaming train and validation datasets.
+
+    Args:
+        dataset_config: Dataset section of the experiment config.
+        tokenizer: Tokenizer used to pack text into tokens.
+        context_length: Number of tokens per training block.
+        seed: Seed used for streaming shuffle.
+
+    Returns:
+        Train and validation StreamingTokenBlockDataset objects.
+    """
     dataset_name = dataset_config.get("name", "HuggingFaceFW/fineweb")
     loader_name = dataset_config.get("loader", dataset_name)
     dataset_config_name = dataset_config.get("config_name")
@@ -186,12 +275,24 @@ def load_streaming_lm_datasets(
         ),
     }
 
+
 def load_lm_datasets(
     dataset_config: dict[str, Any],
     tokenizer: PreTrainedTokenizerBase,
     context_length: int,
     seed: int,
 ) -> DatasetDict | dict[str, StreamingTokenBlockDataset]:
+    """Load and pack language-model datasets.
+
+    Args:
+        dataset_config: Dataset section of the experiment config.
+        tokenizer: Tokenizer used for text tokenization.
+        context_length: Number of tokens per training block.
+        seed: Seed used for train/validation split or streaming shuffle.
+
+    Returns:
+        Packed finite datasets, or streaming token-block datasets.
+    """
     if dataset_config.get("streaming", False):
         return load_streaming_lm_datasets(dataset_config, tokenizer, context_length, seed)
 
@@ -212,9 +313,25 @@ def load_lm_datasets(
     text_column = _pick_text_column(train_raw, dataset_config.get("text_column"))
 
     def tokenize(batch: dict[str, list[Any]]) -> dict[str, list[list[int]]]:
+        """Tokenize one mapped batch.
+
+        Args:
+            batch: Raw dataset batch containing the selected text column.
+
+        Returns:
+            Batch with tokenized input ids.
+        """
         return _tokenize_for_packing(tokenizer, batch[text_column])
 
     def group_texts(batch: dict[str, list[list[int]]]) -> dict[str, list[list[int]]]:
+        """Pack tokenized text into full context-length blocks.
+
+        Args:
+            batch: Batch containing lists of token ids.
+
+        Returns:
+            Batch with input_ids and labels blocks.
+        """
         concatenated = []
         for ids in batch["input_ids"]:
             concatenated.extend(ids)

@@ -9,6 +9,15 @@ def build_llama_model(
     model_config: dict[str, Any],
     tokenizer: PreTrainedTokenizerBase,
 ) -> LlamaForCausalLM:
+    """Create a LLaMA causal language model from config values.
+
+    Args:
+        model_config: Model hyperparameters from the experiment config.
+        tokenizer: Tokenizer used to set vocabulary and special-token ids.
+
+    Returns:
+        A randomly initialized LLaMA causal LM.
+    """
     hidden_size = int(model_config.get("hidden_size", 256))
     num_attention_heads = int(model_config.get("num_attention_heads", 4))
 
@@ -27,4 +36,3 @@ def build_llama_model(
         pad_token_id=tokenizer.pad_token_id,
     )
     return LlamaForCausalLM(config)
-

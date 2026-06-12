@@ -42,7 +42,7 @@ training:
     enabled: true
     policy: combined
     earliest_trigger_step: 4900
-    final_lr_ratio: 0.25
+    final_lr_ratio: 0.1
     decay_type: inverse_proportional
     threshold_percentile: 5.0
     val_loss_gate: 3.585

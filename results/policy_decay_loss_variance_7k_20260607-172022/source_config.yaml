@@ -37,13 +37,13 @@ training:
   eval_interval_steps: 50
   save_interval_steps: 1000
   max_eval_batches: 25
-  notes: "policy decay — loss_variance_low trigger from step 4900, decay_length=700, final_lr_ratio=0.25. Thresholds from p10 of steps 6000-7000 on wsd_intermediate_10k."
+  notes: "policy decay — loss_variance_low trigger from step 4900, decay_length=700, final_lr_ratio=0.1. Thresholds from p10 of steps 6000-7000 on wsd_intermediate_10k."
   policy_decay:
     enabled: true
     policy: loss_variance_low
     earliest_trigger_step: 4900
     decay_length: 700
-    final_lr_ratio: 0.25
+    final_lr_ratio: 0.1
     decay_type: inverse_proportional
     val_loss_gate: 3.585
     loss_variance_threshold: 0.132

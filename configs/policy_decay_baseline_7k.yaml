@@ -43,7 +43,7 @@ schedule:
   type: wsd_s
   warmup_steps: 100
   decay_type: inverse_proportional
-  final_lr_ratio: 0.25
+  final_lr_ratio: 0.1
   decays:
     - start_step: 6300
       end_step: 7000
