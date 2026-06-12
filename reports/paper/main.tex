@@ -1,0 +1,341 @@
+\documentclass[10pt,conference,compsocconf]{IEEEtran}
+
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{microtype}
+
+\begin{document}
+
+\title{Metric-Triggered WSD Decay for Language Model Pretraining}
+
+\author{
+  Pierre Bernadet, Georges-Alex Nahas\\
+  \textit{CS-439 Optimization for Machine Learning, EPFL, Spring 2026}
+}
+
+\maketitle
+
+\begin{abstract}
+  Warmup-Stable-Decay (WSD) learning rate schedules have emerged as a flexible
+  alternative to cosine annealing for language model pretraining, decoupling the
+  stable training phase from a short, sharp decay. Yet the key hyperparameters
+  governing this decay—its timing, duration, and final learning rate ratio—remain
+  largely empirical and are unlikely to generalize across models and datasets.
+  In this work, we study the relationship between online training signals and the optimal decay
+  trigger in WSD, using a LLaMA-style model trained on FineWeb.
+  We reproduce scheduler comparison results from prior work, analyze how decay
+  timing and magnitude affect final validation loss, and propose adaptive
+  metric-based policies to automatically identify the ``sweet spot'' for
+  initiating decay—the point at which the stable phase yields diminishing returns.
+  % TODO: fill in concrete results once figures are finalized.
+\end{abstract}
+
+
+% ============================================================
+\section{Introduction}
+% ============================================================
+
+Cosine learning rate annealing~\cite{kaplan2020scaling} has long been the
+default schedule for pretraining large language models, but it imposes a hard
+token budget: the entire training duration must be fixed before training begins,
+and extending a run requires restarting from scratch. WSD
+schedules~\cite{minicpm} address this limitation by separating training into
+three phases—warmup, a long stable phase at peak learning rate, and a short
+decay—making continued training and branching straightforward.
+
+Despite this appeal, WSD introduces its own set of design choices. When should
+decay begin? How long should it last, and how deep should the learning rate
+drop? Existing work~\cite{minicpm,wen2024river} provides recommendations that
+are largely empirical and tuned for specific model and data scales. Finding the
+right timing—the \emph{sweet spot}—is non-trivial: decaying too early
+forfeits further stable-phase progress, while decaying too late may leave
+potential gains on the table if the budget is fixed.
+
+We define the sweet spot as the step at which the stable phase has converged
+to a plateau: further training at peak learning rate yields diminishing
+validation-loss improvements, and initiating decay will most efficiently
+compress remaining progress. Our work addresses three questions:
+\begin{enumerate}
+  \item Can we reproduce the WSD vs.\ cosine comparison from prior
+        work~\cite{wen2024river} on our model and dataset?
+  \item Do online training metrics correlate with validation loss under
+        different decay timings and magnitudes, allowing us to predict the
+        sweet spot?
+  \item Can we construct meaningful adaptive policies, based on these
+        metrics, that match or improve upon fixed-schedule baselines?
+\end{enumerate}
+
+
+% ============================================================
+\section{Related Work}
+% ============================================================
+
+Learning rate scheduling is a critical and sensitive component of LLM
+pretraining~\cite{kaplan2020scaling,hoffmann2022chinchilla}.
+Cosine annealing has been the dominant choice~\cite{dubey2024llama3}, but it
+requires committing to a total token budget upfront, limiting training
+flexibility~\cite{defazio2024road,muennighoff2023scaling}.
+
+To overcome this rigidity, \citet{minicpm} introduced the WSD scheduler as
+part of the MiniCPM training framework. WSD keeps the learning rate at its
+peak value throughout a long stable phase and compresses the final descent
+into a short, steep decay, enabling seamless extension of training runs.
+\citet{wen2024river} provided a theoretical grounding for WSD through the
+\emph{river valley} loss landscape perspective: the stable phase navigates
+the model along a flat valley bottom, while decay rapidly descends to a sharp
+minimum. Their analysis, conducted under SGD dynamics, also introduced
+WSD-S—a smoothed variant of the decay curve—and empirically compared WSD-S
+against cosine annealing, demonstrating faster convergence per token.
+Further empirical evidence for WSD's efficiency has been reported in a number
+of subsequent pretraining studies.
+
+All of this prior work treats the timing and magnitude of the decay as fixed,
+hand-tuned hyperparameters. Our study fills this gap by asking whether
+\emph{online} training signals can replace these manual choices.
+
+
+% ============================================================
+\section{Materials and Methods}
+% ============================================================
+
+\subsection{Datasets}
+
+We use FineWeb~\cite{penedo2024fineweb} (\texttt{sample-100BT}, 100B tokens)
+as our primary pretraining corpus, a large-scale, high-quality web crawl widely
+adopted in recent open LLM research. To test cross-dataset generalization of our
+policies, we also run selected experiments on
+C4~\cite{raffel2020c4}, another standard English pretraining benchmark.
+Both datasets offer sufficient scale for our computation budget while remaining
+representative of realistic pretraining conditions.
+
+\subsection{Model}
+
+We train a LLaMA-style~\cite{dubey2024llama3} causal language model with 8
+transformer layers, hidden dimension 512, intermediate size 2048, and 8
+attention heads, yielding approximately 40M parameters. This size provides an
+acceptable trade-off between LLM representativeness and the constraint of
+running many ablation experiments.
+
+We use the GPT-2 tokenizer (vocabulary size 50,257) and a context length of
+1024 tokens. Optimization uses AdamW~\cite{loshchilov2019adamw} ($\beta_1 =
+0.9$, $\beta_2 = 0.95$, weight decay 0.1) with a peak learning rate of $6
+\times 10^{-4}$ and gradient clipping at norm 1.0. Following~\citet{wen2024river},
+we adopt AdamW despite the WSD theory being developed under SGD, as AdamW
+is well established for LLM pretraining. Effective batch size is 524,288 tokens
+(batch 8, accumulation 64), giving a total token budget of 5.24B tokens over
+10,000 steps. We use 5,000 validation samples sampled from a held-out stream of
+FineWeb, evaluated every 50 steps. Warmup lasts 100 steps.
+
+\subsection{Experimental Setup}
+
+All experiments share the base configuration above unless stated otherwise.
+We design four experiments to progressively build from reproduction to adaptive policies.
+
+\subsubsection{Exp.\,1 — Scheduler Comparison}
+We reproduce the cosine vs.\ WSD-S comparison of~\citet{wen2024river} on our
+model. A single WSD-S run (decay starting at 90\% of steps, lasting 10\%,
+final LR ratio 0.1) is compared against a cosine run with identical peak LR
+and training budget. This follows the paper's recommended hyperparameters
+and confirms that our setup reaches the plateau phase before decay.
+
+\subsubsection{Exp.\,2 — AdamW vs.\ Quasi-SGD Decay}
+The theoretical analysis of WSD in~\citet{wen2024river} assumes SGD.
+To better align with this theory during the decay phase, we shrink the AdamW
+momentum coefficients to $(\beta_1, \beta_2) \approx (0, 0)$ at the moment
+decay begins, effectively disabling first- and second-moment accumulation and
+recovering a quasi-SGD update rule (see Appendix~\ref{app:adamw-sgd} for
+the derivation). We compare three conditions: (a)~WSD with standard AdamW,
+(b)~cosine with standard AdamW, and (c)~WSD with AdamW betas shrunk at
+decay onset.
+
+\subsubsection{Exp.\,3 — Decay Timing and Amount Sweep}
+To map how the sweet spot depends on when and how strongly the decay is
+applied, we run a grid of WSD-S runs varying the decay start step (as a
+fraction of total training: 50\%, 70\%, 80\%, 90\%) and the final LR ratio
+($r \in \{0.5, 0.3, 0.1, 0.05, 0.01\}$). For each configuration we record
+the final validation loss and the values of two online metrics at decay onset:
+\emph{loss variance} (variance of training loss over a 50-step window) and
+\emph{gradient SNR} (ratio of the mean gradient norm to its standard deviation
+across layers). The goal is to find reliable correlations between these
+pre-decay signals and post-decay performance.
+
+\subsubsection{Exp.\,4 — Adaptive Decay Policies}
+Based on the correlations found in Exp.\,3, we propose three adaptive policies
+that monitor training in real time and trigger decay automatically once the
+signal indicates the sweet spot has been reached.
+
+All policies share the same gating and threshold mechanism.
+To avoid premature decay, a \emph{gate step} of 7,000 (70\% of total steps)
+is enforced: no policy can fire before this point.
+At gate time, we collect metrics over a \emph{lookback window} spanning the
+preceding 10\% of total steps (1,000 steps), which provides a stable
+empirical distribution of each signal under near-converged stable-phase
+dynamics.
+Trigger thresholds are then set at the \textbf{3rd percentile} of this
+distribution.
+This low percentile was chosen empirically: it selects only the most
+unusually quiet moments—where loss variance or gradient SNR has dropped to
+a level rarely seen throughout the stable phase—without being so strict that
+the condition never fires.
+In practice this strikes a good balance between sensitivity (triggering
+close to the true sweet spot) and robustness (ignoring transient dips).
+With thresholds fixed, each policy monitors the live metric stream and fires
+as soon as the condition is met:
+\begin{itemize}
+  \item \textbf{Loss-variance policy}: triggers when the current
+        \texttt{loss\_variance} falls below the 3rd-percentile threshold
+        derived from the lookback window.
+  \item \textbf{Grad-SNR policy}: analogously triggers when \texttt{grad\_snr}
+        falls below its 3rd-percentile threshold.
+  \item \textbf{Combined policy}: requires \emph{both} conditions
+        simultaneously, providing the most conservative trigger.
+\end{itemize}
+Decay length is fixed at 1,000 steps with final LR ratio 0.1.
+We compare each policy against three fixed baselines that start decay at
+70\%, 80\%, and 90\% of steps respectively—the last being the setting
+recommended by~\citet{wen2024river}.
+
+
+% ============================================================
+\section{Results}
+% ============================================================
+
+Figures~\ref{fig:exp1}--\ref{fig:exp4} summarize the results of each
+experiment in the order described above.
+
+\begin{figure}[tbp]
+  \centering
+  % \includegraphics[width=\columnwidth]{figures/exp1_scheduler_comparison}
+  \fbox{\parbox{0.9\columnwidth}{\centering\vspace{1.5cm}
+      \textbf{[Fig.\,1: Validation loss curves for cosine vs.\ WSD-S,}\\
+      \textbf{Exp.\,1 reproduction of \citet{wen2024river}]}
+      \vspace{1.5cm}}}
+  \caption{Cosine vs.\ WSD-S validation loss on FineWeb (10k steps).
+    Decay starts at step 9,000 (90\%) for WSD-S.}
+  \label{fig:exp1}
+\end{figure}
+
+\begin{figure}[tbp]
+  \centering
+  % \includegraphics[width=\columnwidth]{figures/exp2_quasi_sgd}
+  \fbox{\parbox{0.9\columnwidth}{\centering\vspace{1.5cm}
+      \textbf{[Fig.\,2: WSD standard AdamW vs.\ WSD quasi-SGD betas}\\
+      \textbf{vs.\ cosine, validation loss, Exp.\,2]}
+      \vspace{1.5cm}}}
+  \caption{Effect of shrinking AdamW betas at decay onset to approximate
+    SGD dynamics as assumed by the WSD theoretical analysis.}
+  \label{fig:exp2}
+\end{figure}
+
+\begin{figure}[tbp]
+  \centering
+  % \includegraphics[width=\columnwidth]{figures/exp3_sweep}
+  \fbox{\parbox{0.9\columnwidth}{\centering\vspace{1.5cm}
+      \textbf{[Fig.\,3: Final validation loss vs.\ decay start/amount,}\\
+      \textbf{and metric correlations, Exp.\,3]}
+      \vspace{1.5cm}}}
+  \caption{Heatmap of final validation loss across decay timing $\times$
+    final LR ratio, with correlation of pre-decay loss variance and grad
+    SNR to final loss overlaid.}
+  \label{fig:exp3}
+\end{figure}
+
+\begin{figure}[tbp]
+  \centering
+  % \includegraphics[width=\columnwidth]{figures/exp4_policies}
+  \fbox{\parbox{0.9\columnwidth}{\centering\vspace{1.5cm}
+      \textbf{[Fig.\,4: Adaptive policies vs.\ fixed baselines,}\\
+      \textbf{validation loss, Exp.\,4]}
+      \vspace{1.5cm}}}
+  \caption{Validation loss for adaptive policies (loss variance, grad SNR,
+    combined) vs.\ fixed baselines at 70\%, 80\%, and 90\% trigger.}
+  \label{fig:exp4}
+\end{figure}
+
+% TODO: fill in once figures are generated.
+
+
+% ============================================================
+\section{Discussion}
+% ============================================================
+
+% TODO: discuss once results are finalized.
+% Tentative structure:
+% - Exp1: does our model reproduce the WSD vs cosine gap?
+% - Exp2: does quasi-SGD decay improve on standard AdamW WSD?
+% - Exp3: which metrics correlate best with post-decay loss?
+%         Does earlier decay (more budget) always lose?
+% - Exp4: do policies match the best fixed baseline?
+%         When do they fire vs fixed triggers?
+%         Limitations: threshold sensitivity, gate choice.
+
+
+% ============================================================
+\section{Summary}
+% ============================================================
+
+% TODO: fill in once results are finalized.
+% Tentative:
+% - WSD outperforms cosine with similar settings on our model/data.
+% - [result of quasi-SGD experiment].
+% - Online metrics (loss variance, grad SNR) [do/do not] reliably
+%   predict the sweet spot for decay timing.
+% - Adaptive policies achieve [competitive/improved] results vs.
+%   fixed 90% baseline, without requiring manual timing selection.
+
+
+% ============================================================
+\newpage
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+
+% ============================================================
+\appendix
+
+\section{AdamW to Quasi-SGD Beta Shrinking}
+\label{app:adamw-sgd}
+
+The AdamW update at step $t$ is:
+\begin{align}
+  m_t &= \beta_1 m_{t-1} + (1 - \beta_1)\,g_t, \\
+  v_t &= \beta_2 v_{t-1} + (1 - \beta_2)\,g_t^2, \\
+  \hat{m}_t &= m_t / (1 - \beta_1^t), \quad
+  \hat{v}_t = v_t / (1 - \beta_2^t), \\
+  \theta_t &= \theta_{t-1} - \eta\,\hat{m}_t / (\sqrt{\hat{v}_t} + \varepsilon)
+             - \eta\,\lambda\,\theta_{t-1},
+\end{align}
+where $g_t$ is the gradient, $\eta$ the learning rate, and $\lambda$ the weight
+decay coefficient. When $\beta_1 \to 0$, the first moment collapses to the
+instantaneous gradient: $m_t \approx g_t$, eliminating gradient averaging.
+When additionally $\beta_2 \to 0$, the second moment tracks
+$v_t \approx g_t^2$, so the adaptive scaling $\hat{m}_t/\sqrt{\hat{v}_t}$
+approaches $\text{sign}(g_t)$—a per-element signed update reminiscent of
+SignSGD.
+
+In practice, setting $(\beta_1, \beta_2) \leftarrow (0,\,0)$ at the onset of
+the decay phase effectively disables the exponential moving averages built up
+during the stable phase and replaces them with the current-step gradient.
+This brings the optimizer closer to the pure SGD assumed in the theoretical
+analysis of~\citet{wen2024river}, at the cost of discarding useful second-order
+information. The empirical comparison in Exp.\,2 tests whether this theoretical
+alignment translates into a measurable gain.
+
+\section{Correlation Analysis Details}
+\label{app:correlations}
+
+% TODO: Pearson / Spearman correlation tables between pre-decay metrics
+% (loss_variance, grad_snr) and final validation loss across Exp.3 grid.
+% Include scatter plots and regression lines.
+
+\section{Additional Plots}
+\label{app:extra-plots}
+
+% TODO: Per-run training curves, trigger step distributions for adaptive
+% policies, C4 cross-dataset generalization results.
+
+\end{document}
