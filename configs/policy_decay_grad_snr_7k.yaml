@@ -37,7 +37,7 @@ training:
   eval_interval_steps: 50
   save_interval_steps: 1000
   max_eval_batches: 25
-  notes: "policy decay — grad_snr_low trigger from step 4900, decay_length=700, final_lr_ratio=0.25. Thresholds from p10 of steps 6000-7000 on wsd_intermediate_10k."
+  notes: "policy decay — grad_snr_low trigger from step 4900, decay_length=700, final_lr_ratio=0.25. Thresholds from the 5th percentile of steps 6000-7000 on wsd_intermediate_10k."
   policy_decay:
     enabled: true
     policy: grad_snr_low
