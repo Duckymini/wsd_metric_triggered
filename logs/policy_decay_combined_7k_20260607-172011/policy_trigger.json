@@ -1,0 +1,14 @@
+{
+  "policy": "combined",
+  "trigger_step": 6150,
+  "decay_end_step": 6850,
+  "final_lr_ratio": 0.25,
+  "decay_length": 700,
+  "metrics_at_trigger": {
+    "step": 6150,
+    "loss_variance": 0.12904761731624603,
+    "grad_snr": 0.9252171516418457,
+    "loss_oscillation": 0.037243571132421494,
+    "loss_improvement_rate": 0.006850684806704521
+  }
+}
