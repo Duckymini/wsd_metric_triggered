@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import time
+import warnings
 from collections import deque
 from contextlib import nullcontext
 from copy import deepcopy
@@ -23,7 +24,7 @@ from transformers import AutoTokenizer, default_data_collator, set_seed
 from src.config import load_config, save_config
 from src.data import load_lm_datasets
 from src.model import build_llama_model
-from src.policy import check_policy
+from src.policy import check_policy, compute_percentile_thresholds
 from src.schedules import build_lr_scheduler, build_policy_decay_scheduler, build_probe_scheduler
 
 
@@ -494,15 +495,17 @@ def train(config_path: str, run_name: str | None = None) -> None:
     policy_cfg = training.get("policy_decay", {})
     policy_enabled = bool(policy_cfg.get("enabled", False))
     policy_name = policy_cfg.get("policy", None)
-    earliest_trigger = int(policy_cfg.get("earliest_trigger_step", 3500))
-    policy_decay_length = int(policy_cfg.get("decay_length", 500))
+    step_gate_ratio = float(policy_cfg.get("step_gate_ratio", 0.7))
+    gate_step = max(1, int(step_gate_ratio * max_steps))
+    lookback_ratio = float(policy_cfg.get("lookback_ratio", 0.1))
+    lookback_steps = max(1, int(lookback_ratio * max_steps))
     policy_final_lr_ratio = float(policy_cfg.get("final_lr_ratio", 0.25))
     policy_decay_type = policy_cfg.get("decay_type", "inverse_proportional")
+    threshold_percentile = float(policy_cfg.get("threshold_percentile", 5.0))
     policy_warmup_steps = int(config["schedule"].get("warmup_steps", 0))
     policy_triggered = False
     policy_trigger_step: int | None = None
-    metrics_history: deque[dict[str, float]] = deque(maxlen=100)
-    val_loss_history: list[tuple[int, float]] = []
+    metrics_history: deque[dict[str, float]] = deque(maxlen=lookback_steps)
     policy_trigger_log_path = output_paths["logs"] / "policy_trigger.json"
 
     train_iter = iter(train_loader)
@@ -647,20 +650,21 @@ def train(config_path: str, run_name: str | None = None) -> None:
                     "elapsed_seconds": time.time() - start_time,
                 },
             )
-            if policy_enabled and not policy_triggered:
-                val_loss_history.append((step, valid_loss))
+        if policy_enabled and not policy_triggered and step == gate_step and policy_name:
+            computed = compute_percentile_thresholds(metrics_history, policy_name, percentile=threshold_percentile)
+            if len(metrics_history) < lookback_steps:
+                warnings.warn(
+                    f"Policy gate reached at step {gate_step} but metrics_history has only "
+                    f"{len(metrics_history)} entries (expected {lookback_steps}). "
+                    "Percentile thresholds computed from available data."
+                )
+            policy_cfg.update(computed)
 
-        if policy_enabled and not policy_triggered and step >= earliest_trigger and policy_name:
-            if check_policy(policy_name, metrics_history, val_loss_history, policy_cfg):
+        if policy_enabled and not policy_triggered and step >= gate_step and policy_name:
+            if check_policy(policy_name, metrics_history, policy_cfg):
                 policy_triggered = True
                 policy_trigger_step = step
-                if step + policy_decay_length > max_steps:
-                    import warnings
-                    warnings.warn(
-                        f"Policy triggered at step {step} but decay would end at "
-                        f"{step + policy_decay_length} > max_steps {max_steps}. "
-                        "Training will end mid-decay."
-                    )
+                policy_decay_length = max_steps - step
                 scheduler = build_policy_decay_scheduler(
                     optimizer,
                     trigger_step=step,
@@ -674,9 +678,11 @@ def train(config_path: str, run_name: str | None = None) -> None:
                         {
                             "policy": policy_name,
                             "trigger_step": step,
+                            "gate_step": gate_step,
                             "decay_end_step": step + policy_decay_length,
                             "final_lr_ratio": policy_final_lr_ratio,
                             "decay_length": policy_decay_length,
+                            "computed_thresholds": {k: policy_cfg[k] for k in ("loss_variance_threshold", "grad_snr_threshold") if k in policy_cfg},
                             "metrics_at_trigger": dict(metrics_history[-1]) if metrics_history else {},
                         },
                         _f,
