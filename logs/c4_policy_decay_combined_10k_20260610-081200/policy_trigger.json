@@ -1,0 +1,19 @@
+{
+  "policy": "combined",
+  "trigger_step": 7420,
+  "gate_step": 7000,
+  "decay_end_step": 10000,
+  "final_lr_ratio": 0.1,
+  "decay_length": 2580,
+  "computed_thresholds": {
+    "loss_variance_threshold": 0.1432472737133503,
+    "grad_snr_threshold": 0.9008826673030853
+  },
+  "metrics_at_trigger": {
+    "step": 7420,
+    "loss_variance": 0.1323477327823639,
+    "grad_snr": 0.8808589577674866,
+    "loss_oscillation": 0.06692676246166229,
+    "loss_improvement_rate": 0.0002549398690462112
+  }
+}
