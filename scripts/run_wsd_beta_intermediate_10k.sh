@@ -10,4 +10,4 @@ export TOKENIZERS_PARALLELISM=false
 export TRAIN_FORCE_OS_EXIT_ON_SUCCESS=1
 mkdir -p "${TRANSFORMERS_CACHE}" "${HF_DATASETS_CACHE}"
 
-python3 -m src.train --config configs/cosine_intermediate_10k.yaml
+python3 -m src.train --config configs/wsd_beta_intermediate_10k.yaml

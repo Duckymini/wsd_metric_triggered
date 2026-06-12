@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Callable
 
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
@@ -71,7 +71,7 @@ def build_lr_scheduler(optimizer: Optimizer, schedule_config: dict[str, Any]) ->
     schedule_type = schedule_config["type"].lower()
     warmup_steps = int(schedule_config.get("warmup_steps", 0))
 
-    if schedule_type in {"wsd", "wsd_s"}:
+    if schedule_type in {"wsd", "wsd_s", "wsd_beta"}:
         final_lr_ratio = float(schedule_config.get("final_lr_ratio", 0.1))
         if not 0.0 < final_lr_ratio <= 1.0:
             raise ValueError("WSD final_lr_ratio must be in (0, 1].")
@@ -110,6 +110,50 @@ def build_lr_scheduler(optimizer: Optimizer, schedule_config: dict[str, Any]) ->
             return _cosine_decay(progress, min_lr_ratio)
 
     else:
-        raise ValueError(f"Unknown schedule type '{schedule_type}'. Expected 'wsd', 'wsd_s', or 'cosine'.")
+        raise ValueError(f"Unknown schedule type '{schedule_type}'. Expected 'wsd', 'wsd_s', 'wsd_beta', or 'cosine'.")
 
     return LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
+def build_beta_scheduler(
+    schedule_config: dict[str, Any],
+    initial_beta1: float,
+    initial_beta2: float,
+) -> Callable[[int], tuple[float, float]]:
+    """Returns a function step -> (beta1, beta2) that co-decays betas alongside the LR.
+
+    beta1 decays from initial_beta1 → ~0 (momentum disappears).
+    beta2 decays from initial_beta2 → ~1 (second moment freezes).
+    Both follow the same decay shape as the LR (decay_type field).
+    Only active during the decay window(s); stable and warmup phases are unchanged.
+    """
+    warmup_steps = int(schedule_config.get("warmup_steps", 0))
+    decay_type = schedule_config.get("decay_type", "inverse_proportional").lower()
+    decay_intervals = _wsd_decay_intervals(schedule_config, warmup_steps)
+    _BETA_FINAL_RATIO = 1e-6
+
+    def _shape(progress: float) -> float:
+        if decay_type == "inverse_proportional":
+            return _inverse_proportional_decay(progress, _BETA_FINAL_RATIO)
+        if decay_type == "cosine":
+            return _cosine_decay(progress, _BETA_FINAL_RATIO)
+        raise ValueError(f"Unknown decay_type '{decay_type}'.")
+
+    final_beta1 = initial_beta1 * _BETA_FINAL_RATIO
+    final_beta2 = 1.0 - (1.0 - initial_beta2) * _BETA_FINAL_RATIO
+
+    def beta_fn(step: int) -> tuple[float, float]:
+        for decay_idx, (start_step, end_step) in enumerate(decay_intervals):
+            if step < start_step:
+                return (initial_beta1, initial_beta2)
+            if step <= end_step:
+                progress = float(step - start_step) / float(end_step - start_step)
+                s = _shape(progress)
+                b1 = initial_beta1 * s
+                b2 = 1.0 - (1.0 - initial_beta2) * s
+                return (b1, b2)
+            if decay_idx == len(decay_intervals) - 1:
+                return (final_beta1, final_beta2)
+        return (initial_beta1, initial_beta2)
+
+    return beta_fn
