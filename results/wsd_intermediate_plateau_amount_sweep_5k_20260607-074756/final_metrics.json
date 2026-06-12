@@ -1,0 +1,10 @@
+{
+  "run_id": "wsd_intermediate_plateau_amount_sweep_5k_20260607-074756",
+  "final_train_loss": 4.0984913284413516,
+  "final_validation_loss": 3.6237917041778562,
+  "tokens_seen": 2621440000,
+  "final_learning_rate": 0.0006,
+  "total_seconds": 108224.06588983536,
+  "device": "cuda",
+  "schedule": "warmup_stable"
+}

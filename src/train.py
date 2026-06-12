@@ -465,6 +465,10 @@ def train(config_path: str, run_name: str | None = None) -> None:
         betas=tuple(training.get("betas", [0.9, 0.95])),
     )
     scheduler = build_lr_scheduler(optimizer, config["schedule"])
+    beta_scheduler = None
+    if config["schedule"]["type"].lower() == "wsd_beta":
+        initial_betas = tuple(training.get("betas", [0.9, 0.95]))
+        beta_scheduler = build_beta_scheduler(config["schedule"], float(initial_betas[0]), float(initial_betas[1]))
 
     max_steps = int(training["max_steps"])
     grad_accum = int(training.get("gradient_accumulation_steps", 1))
@@ -566,6 +570,10 @@ def train(config_path: str, run_name: str | None = None) -> None:
 
         optimizer.step()
         scheduler.step()
+        if beta_scheduler is not None:
+            b1, b2 = beta_scheduler(step)
+            for pg in optimizer.param_groups:
+                pg["betas"] = (b1, b2)
 
         post_metrics, current_params_vec = _compute_post_step_metrics(model, prev_params_vec)
         prev_params_vec = current_params_vec
@@ -615,6 +623,7 @@ def train(config_path: str, run_name: str | None = None) -> None:
                     "weight_norm": grad_metrics["weight_norm"],
                     "param_update_norm": post_metrics["param_update_norm"],
                     "learning_rate": lr,
+                    **({"beta1": beta_scheduler(step)[0], "beta2": beta_scheduler(step)[1]} if beta_scheduler is not None else {}),
                     "elapsed_seconds": time.time() - start_time,
                 },
             )
