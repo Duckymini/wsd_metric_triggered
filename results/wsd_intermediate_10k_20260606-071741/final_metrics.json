@@ -1,0 +1,10 @@
+{
+  "run_id": "wsd_intermediate_10k_20260606-071741",
+  "final_train_loss": 3.8540303567232566,
+  "final_validation_loss": 3.4422494983673095,
+  "tokens_seen": 5242880000,
+  "final_learning_rate": 5.999999999999999e-06,
+  "total_seconds": 55987.516501665115,
+  "device": "cuda",
+  "schedule": "wsd_s"
+}
