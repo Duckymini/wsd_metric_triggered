@@ -1,0 +1,10 @@
+{
+  "run_id": "wsd_intermediate_paper_decay_20260605-154459",
+  "final_train_loss": 5.15456270121038,
+  "final_validation_loss": 4.234587049484253,
+  "tokens_seen": 524288000,
+  "final_learning_rate": 5.999999999999999e-06,
+  "total_seconds": 5533.290056705475,
+  "device": "cuda",
+  "schedule": "wsd_s"
+}
