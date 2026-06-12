@@ -11,6 +11,7 @@ The repository contains the training code, experiment configurations, launch scr
 - [Reproducibility Notes](#reproducibility-notes)
 - [Repository Structure](#repository-structure)
 - [Config, Log, and Result Formats](#config-log-and-result-formats)
+- [Notebooks](#notebooks)
 - [Source Files](#source-files)
 - [Experiments Included](#experiments-included)
 - [Inspecting Results](#inspecting-results)
@@ -100,18 +101,7 @@ If you want to use non-streaming datasets, local files, or a different train/val
 
 ## Running Experiments
 
-After activating the environment and moving to the repository root, a run can be launched directly with:
-
-```bash
-export PYTHONPATH="$PWD:${PYTHONPATH:-}"
-python -m src.train --config configs/wsd_intermediate_10k.yaml
-```
-
-The shell scripts in `scripts/` wrap the same command and set the environment variables for you. Before using them, edit their machine-specific paths as described above. Then run, for example:
-
-```bash
-bash scripts/run_wsd_intermediate_10k.sh
-```
+After the environment is ready, launch a run either directly with `python -m src.train --config ...` or through one of the scripts in `scripts/`, following the setup option chosen above.
 
 Each run creates a timestamped `run_id`:
 
@@ -231,15 +221,15 @@ optimisation/
     </tr>
     <tr>
       <td><code>src/</code></td>
-      <td>Python source code for config loading, streaming data preparation, model construction, schedule construction, policy triggers, and training.</td>
+      <td>Python source code; individual files are described in the Source Files section.</td>
     </tr>
     <tr>
       <td><code>logs/</code></td>
-      <td>Committed run logs. Each run directory contains step-level JSONL metrics and, for policy/sweep runs, additional trigger or probe files.</td>
+      <td>Committed run logs used for analysis and reproducibility.</td>
     </tr>
     <tr>
       <td><code>results/</code></td>
-      <td>Committed final run artifacts. Each run directory contains the resolved config copy and final metrics.</td>
+      <td>Committed final run artifacts, including saved configs and final metrics.</td>
     </tr>
     <tr>
       <td><code>experiments/</code></td>
@@ -247,7 +237,7 @@ optimisation/
     </tr>
     <tr>
       <td><code>notebooks/</code></td>
-      <td>Analysis notebooks for schedule comparison, policy-decay analysis, and plateau decay-amount metrics.</td>
+      <td>Analysis notebooks used to visualise the saved logs and results.</td>
     </tr>
     <tr>
       <td><code>checkpoints/</code></td>
@@ -388,6 +378,35 @@ Example `final_metrics.json`:
 
 ---
 
+## Notebooks
+
+The notebooks allow you to visualise the saved logs and result files without rerunning the training jobs.
+
+<table border="1" rules="all" frame="box" cellspacing="0" cellpadding="6">
+  <thead>
+    <tr>
+      <th>Notebook</th>
+      <th>Purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>notebooks/wsd_vs_cosine.ipynb</code></td>
+      <td>Compares the saved WSD and cosine runs using their validation losses and learning-rate trajectories.</td>
+    </tr>
+    <tr>
+      <td><code>notebooks/policy_decay_comparison.ipynb</code></td>
+      <td>Analyses the policy-decay runs against the fixed WSD baseline.</td>
+    </tr>
+    <tr>
+      <td><code>notebooks/plateau_decay_amount_metrics_analysis.ipynb</code></td>
+      <td>Inspects the plateau-region decay-amount sweep and the metrics recorded during probe decays.</td>
+    </tr>
+  </tbody>
+</table>
+
+---
+
 ## Source Files
 
 <table border="1" rules="all" frame="box" cellspacing="0" cellpadding="6">
@@ -480,10 +499,10 @@ Example `final_metrics.json`:
 
 ## Inspecting Results
 
-The fastest overview is:
+The fastest terminal overview is:
 
 ```bash
 cat experiments/registry.csv
 ```
 
-For detailed analysis, open the notebooks in `notebooks/`. They consume the committed logs and results, so they can be run without retraining as long as the environment has the dependencies from `environment.yml`.
+For plots and detailed comparisons, use the notebooks listed above. They consume the committed logs and results, so they can be run without retraining as long as the environment has the dependencies from `environment.yml`.
